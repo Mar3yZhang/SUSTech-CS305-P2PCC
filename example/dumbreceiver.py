@@ -32,9 +32,9 @@ ex_downloading_chunkhash = ""
 
 
 def process_download(sock, chunkfile, outputfile):
-    '''
+    """
     if DOWNLOAD is used, the peer will keep getting files until it is done
-    '''
+    """
     # print('PROCESS GET SKELETON CODE CALLED.  Fill me in! I\'ve been doing! (', chunkfile, ',     ', outputfile, ')')
     global ex_output_file
     global ex_received_chunk

@@ -21,7 +21,7 @@ You are advised to focus the following things:
 
 BUF_SIZE = 1400
 CHUNK_DATA_SIZE = 512 * 1024
-HEADER_LEN = struct.calcsize("HBBHHII")
+HEADER_LEN = struct.calcsize("HBBHHII")  # 2+1+1+2+2+4+4
 MAX_PAYLOAD = 1024
 
 config = None
@@ -29,10 +29,10 @@ ex_sending_chunkhash = ""
 
 
 def process_download(sock, chunkfile, outputfile):
-    '''
+    """
     if DOWNLOAD is used, the peer will keep getting files until it is done
-    '''
-    # print('PROCESS GET SKELETON CODE CALLED.  Fill me in! I\'ve been doing! (', chunkfile, ',     ', outputfile, ')')
+    """
+    print('PROCESS GET SKELETON CODE CALLED.  Fill me in! I\'ve been doing! (', chunkfile, ',     ', outputfile, ')')
     # This method will not be called in sender
 
 
@@ -73,12 +73,12 @@ def process_inbound_udp(sock):
     elif Type == 4:
         # received an ACK pkt
         ack_num = socket.ntohl(Ack)
-        if (ack_num) * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
+        if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished
             print(f"finished sending {ex_sending_chunkhash}")
             pass
         else:
-            left = (ack_num) * MAX_PAYLOAD
+            left = ack_num * MAX_PAYLOAD
             right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
             next_data = config.haschunks[ex_sending_chunkhash][left: right]
             # send next data

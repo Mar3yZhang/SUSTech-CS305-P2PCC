@@ -5,7 +5,7 @@ import struct
 import sys
 
 
-class SimSocket():
+class SimSocket:
     __glSrcAddr = 0
     __gsSrcPort = 0
     __giSpiffyEnabled = False
