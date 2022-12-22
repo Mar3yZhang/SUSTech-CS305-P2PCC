@@ -1,9 +1,11 @@
-import grader
-import time
-import pytest
-import pickle
 import hashlib
 import os
+import pickle
+import time
+
+import pytest
+
+import grader
 
 '''
 This test examines the basic function of your RDT and congestion control.
@@ -17,6 +19,7 @@ You will get 12 points. 22 in total.
 However, note that this is just a sanity test. Passing this test does *NOT* guarantee your correctness in comprehensive tests.
 '''
 
+
 @pytest.fixture(scope='module')
 def drop_session():
     success = False
@@ -28,7 +31,8 @@ def drop_session():
     drop_session.add_peer(2, "src/peer.py", "test/tmp2/nodes2.map", "test/tmp2/data2.fragment", 1, ("127.0.0.1", 48002))
     drop_session.run_grader()
 
-    drop_session.peer_list[("127.0.0.1", 48001)].send_cmd('''DOWNLOAD test/tmp2/download_target.chunkhash test/tmp2/download_result.fragment\n''')
+    drop_session.peer_list[("127.0.0.1", 48001)].send_cmd(
+        '''DOWNLOAD test/tmp2/download_target.chunkhash test/tmp2/download_result.fragment\n''')
 
     proc = drop_session.peer_list[("127.0.0.1", 48001)].process
 
@@ -36,21 +40,23 @@ def drop_session():
         if "GOT" in line:
             success = True
             break
-        elif time.time()-stime>time_max:
+        elif time.time() - stime > time_max:
             # Reached max transmission time, abort
             success = False
-            break 
-        
-    # time.sleep(5)
-    
+            break
+
+            # time.sleep(5)
+
     for p in drop_session.peer_list.values():
         p.terminate_peer()
-    
+
     return drop_session, success
+
 
 def test_finish(drop_session):
     session, success = drop_session
     assert success == True, "Fail to complete transfer or timeout"
+
 
 def test_rdt(drop_session):
     assert os.path.exists("test/tmp2/download_result.fragment"), "no downloaded file"
@@ -65,4 +71,4 @@ def test_rdt(drop_session):
     sha1.update(download_fragment[target_hash])
     received_chunkhash_str = sha1.hexdigest()
 
-    assert target_hash.strip() == received_chunkhash_str.strip(), f"received data mismatch, expect hash: {target_hash}, actual: {received_chunkhash_str}" 
+    assert target_hash.strip() == received_chunkhash_str.strip(), f"received data mismatch, expect hash: {target_hash}, actual: {received_chunkhash_str}"

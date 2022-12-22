@@ -1,12 +1,12 @@
-import struct
-import socket
 import logging
-import select
 import os
+import socket
+import struct
 
 SpiffyHeaderLen = struct.calcsize("I4s4sHH")
 StdHeaderLen = struct.calcsize("HBBHHII")
 _MAXBUFSIZE = 1500
+
 
 class StdPkt:
     def __init__(self, magic, team, pkt_type, header_len, pkt_len, seq, ack, pkt_btyes, from_addr, to_addr) -> None:
@@ -20,6 +20,7 @@ class StdPkt:
         self.from_addr = from_addr
         self.to_addr = to_addr
         self.pkt_bytes = pkt_btyes
+
 
 class CheckerSocket:
     def __init__(self, addr) -> None:
@@ -39,11 +40,13 @@ class CheckerSocket:
         fh.setFormatter(formatter)
         self.__logger.addHandler(fh)
         self.__logger.info("Start logging")
-        
+
     def recv_pkt_from(self):
         read_pkt_byte, from_addr = self.__sock.recvfrom(_MAXBUFSIZE)
-        mixedheaders = read_pkt_byte[:SpiffyHeaderLen+StdHeaderLen]
-        s_head_ID, s_head_lSrcAddr, s_head_lDestAddr, s_head_lSrcPort, s_head_lDestPort = struct.unpack("I4s4sHH", mixedheaders[:SpiffyHeaderLen])
+        mixedheaders = read_pkt_byte[:SpiffyHeaderLen + StdHeaderLen]
+        s_head_ID, s_head_lSrcAddr, s_head_lDestAddr, s_head_lSrcPort, s_head_lDestPort = struct.unpack("I4s4sHH",
+                                                                                                        mixedheaders[
+                                                                                                        :SpiffyHeaderLen])
         s_head_lSrcAddr = socket.inet_ntoa(s_head_lSrcAddr)
         s_head_lDestAddr = socket.inet_ntoa(s_head_lDestAddr)
         s_head_lSrcPort = socket.ntohs(s_head_lSrcPort)
@@ -73,7 +76,7 @@ class CheckerSocket:
 
     def sendto(self, data, addr):
         self.__sock.sendto(data, addr)
-    
+
     def fileno(self):
         return self.__sock.fileno()
 

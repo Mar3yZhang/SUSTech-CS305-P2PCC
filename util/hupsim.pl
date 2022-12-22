@@ -11,7 +11,7 @@ package NSQueue;
 sub new ($) {
 
 	my $self = {};
-
+    
 	my $class = shift;
 	$self->{'routeRef'} = shift;
 	my $ratebps = shift;

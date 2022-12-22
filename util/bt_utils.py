@@ -1,6 +1,7 @@
-import sys
 import os
 import pickle
+import sys
+
 
 class BtConfig:
     def __init__(self, args):
@@ -26,17 +27,16 @@ class BtConfig:
             print('bt_parse error:  No peer information for myself (id ', self.identity, ')!')
             sys.exit(1)
 
-        self.ip= p[1]
+        self.ip = p[1]
         self.port = int(p[2])
 
     def bt_parse_peer_list(self):
         with open(self.peer_list_file, 'r') as file:
             for line in file:
-                if line[0] == '#': 
+                if line[0] == '#':
                     continue
                 line = line.strip(os.linesep)
-                self.peers.append(line.split(' ')) # nodeid, hostname, port
-
+                self.peers.append(line.split(' '))  # nodeid, hostname, port
 
     def bt_parse_haschunk_list(self):
         with open(self.has_chunk_file, 'rb') as file:
@@ -58,4 +58,3 @@ class BtConfig:
 
         for p in config.peers:
             print('  peer ', p[0], ': ', p[1], ':', p[2])
-    
