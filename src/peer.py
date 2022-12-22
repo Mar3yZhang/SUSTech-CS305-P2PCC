@@ -56,7 +56,7 @@ def process_download(sock, chunkfile, outputfile):
     # |2byte  header len  |2byte pkt len |
     # |      4byte  seq                  |
     # |      4byte  ack                  |
-    whohas_header = struct.pack(HEADER_FORM, 52305, 35, 0, HEADER_LEN,
+    whohas_header = struct.pack("HBBHHII", 52305, 35, 0, HEADER_LEN,
                                 HEADER_LEN + len(download_hash), 0, 0)
     whohas_pkt = whohas_header + download_hash
 
@@ -73,7 +73,7 @@ def process_inbound_udp(sock):
     global ex_sending_chunkhash
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
-    Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(HEADER_FORM, pkt[:HEADER_LEN])
+    Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack("HBBHHII", pkt[:HEADER_LEN])
     data = pkt[HEADER_LEN:]
     # print("SKELETON CODE CALLED, FILL this!")
     if Type == 0:
