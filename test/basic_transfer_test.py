@@ -9,7 +9,7 @@ import grader
 
 '''
 This test examines the basic function of your RDT and congestion control.
-There will be a packet loss around 21s after the program starts.
+There will be a packet loss around #150
 Your peer should retransmit and receive the entire data correctly and dump them to serialized dict.
 To show your congestion control implementation, you need to plot your sending window size change in a plot similar to the one in
 the document.
@@ -17,6 +17,20 @@ If you can pass RDT test, you will gain 10 points.
 Congestion control will be inspected by humans on your presentation day. If you show the correct implementation of congestion control,
 You will get 12 points. 22 in total.
 However, note that this is just a sanity test. Passing this test does *NOT* guarantee your correctness in comprehensive tests.
+
+.fragment file:
+data1.fragment: chunk 1,2
+data2.fragment: chunk 3,4
+
+This test is equivalent to run (except for packet loss):
+In shell1:
+python3 src/peer.py -p test/tmp2/nodes2.map -c test/tmp2/data1.fragment -m 1 -i 1 -t 60
+
+In shell2:
+python3 src/peer.py -p test/tmp2/nodes2.map -c test/tmp2/data2.fragment -m 1 -i 2 -t 60
+
+In shell1:
+DOWNLOAD test/tmp2/download_target.chunkhash test/tmp2/download_result.fragment
 '''
 
 
@@ -24,6 +38,9 @@ However, note that this is just a sanity test. Passing this test does *NOT* guar
 def drop_session():
     success = False
     time_max = 80
+
+    if os.path.exists("test/tmp2/download_result.fragment"):
+        os.remove("test/tmp2/download_result.fragment")
 
     stime = time.time()
     drop_session = grader.GradingSession(grader.drop_handler, latency=0.01)
@@ -34,19 +51,19 @@ def drop_session():
     drop_session.peer_list[("127.0.0.1", 48001)].send_cmd(
         '''DOWNLOAD test/tmp2/download_target.chunkhash test/tmp2/download_result.fragment\n''')
 
-    proc = drop_session.peer_list[("127.0.0.1", 48001)].process
 
-    for line in proc.stdout:
-        if "GOT" in line:
+    while True:
+        if os.path.exists("test/tmp2/download_result.fragment"):
             success = True
             break
         elif time.time() - stime > time_max:
             # Reached max transmission time, abort
             success = False
-            break
+            break 
 
-            # time.sleep(5)
-
+        time.sleep(0.1)
+        
+    
     for p in drop_session.peer_list.values():
         p.terminate_peer()
 
@@ -69,6 +86,6 @@ def test_rdt(drop_session):
 
     sha1 = hashlib.sha1()
     sha1.update(download_fragment[target_hash])
-    received_chunkhash_str = sha1.hexdigest()
+    received_hash_str = sha1.hexdigest()
 
-    assert target_hash.strip() == received_chunkhash_str.strip(), f"received data mismatch, expect hash: {target_hash}, actual: {received_chunkhash_str}"
+    assert target_hash.strip() == received_hash_str.strip(), f"received data mismatch, expect hash: {target_hash}, actual: {received_hash_str}" 
