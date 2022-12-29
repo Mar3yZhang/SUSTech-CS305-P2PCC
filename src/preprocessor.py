@@ -11,22 +11,22 @@ def generate_fragment():
                "../util/make_data.py " \
                "foo.zip " \
                "data1.fragment " \
-               "10 " \
-               "1,2,3,4"
+               "8 " \
+               "1,2,3"
 
     command2 = "python3 " \
                "../util/make_data.py " \
                "foo.zip " \
                "data2.fragment " \
-               "10 " \
-               "5,6,7"
+               "8 " \
+               "4,5,6"
 
     command3 = "python3 " \
                "../util/make_data.py " \
                "foo.zip " \
                "data3.fragment " \
-               "10 " \
-               "8,9,10"
+               "8 " \
+               "7,8"
 
     command_list.append(command1)
     command_list.append(command2)
@@ -34,9 +34,8 @@ def generate_fragment():
 
 # 如果需要实现peer自动查找缺漏的chunk并从其他peer下载的话，需要自动生成peer对应的download.chunkhash
 def generate_download_info():
-    command = "sed -n \"3p\" master.chunkhash > download.chunkhash"
-    command_list.append(command)
-
+    command1 = "sed -n \"4p\" master.chunkhash > download.chunkhash"
+    command_list.append(command1)
 
 generate_fragment()
 generate_download_info()

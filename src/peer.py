@@ -25,8 +25,10 @@ config = None
 ex_output_file = None
 ex_received_chunk = dict()
 ex_downloading_chunkhash = ""
+ex_sending_chunkhash = ""
 
-# 直接使用网络端传输有bug，没搞懂
+
+# 这里直接使用网络端传输有bug，没搞懂
 # HEADER_FORM = "!HBBHHII"
 
 
@@ -42,6 +44,7 @@ def process_download(sock, chunkfile, outputfile):
     # Step 1: read chunkhash to be downloaded from chunkfile
     download_hash = bytes()
     with open(chunkfile, 'r') as cf:
+        # TODO:这里需要考虑download文件里不只有一个chunkhash的情况
         index, datahash_str = cf.readline().strip().split(" ")
         ex_received_chunk[datahash_str] = bytes()
         ex_downloading_chunkhash = datahash_str
@@ -49,9 +52,10 @@ def process_download(sock, chunkfile, outputfile):
         # hex_str to bytes
         datahash = bytes.fromhex(datahash_str)
         download_hash = download_hash + datahash
+        print(cf.readline())
 
     # Step2: make WHOHAS pkt
-    # |2byte magic|1byte type |1byte team|
+    # |2byte magic|1byte team |1byte type|
     # |2byte  header len  |2byte pkt len |
     # |      4byte  seq                  |
     # |      4byte  ack                  |
@@ -64,6 +68,7 @@ def process_download(sock, chunkfile, outputfile):
     for p in peer_list:
         if int(p[0]) != config.identity:
             sock.sendto(whohas_pkt, (p[1], int(p[2])))
+            print(f"发送 WHOHAS 报文给peer: {p}")
 
 
 def process_inbound_udp(sock):
@@ -74,16 +79,18 @@ def process_inbound_udp(sock):
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack("HBBHHII", pkt[:HEADER_LEN])
     data = pkt[HEADER_LEN:]
-    # print("SKELETON CODE CALLED, FILL this!")
     if Type == 0:
         # received an WHOHAS pkt
         # see what chunk the sender has
+
+        print("接收到 WHOHAS 报文")
+
         whohas_chunk_hash = data[:20]
         # bytes to hex_str
         chunkhash_str = bytes.hex(whohas_chunk_hash)
         ex_sending_chunkhash = chunkhash_str
 
-        print(f"whohas: {chunkhash_str}, has: {list(config.haschunks.keys())}")
+        print(f"received whohas: {chunkhash_str}, current peer has: {list(config.haschunks.keys())}")
         if chunkhash_str in config.haschunks:
             # send back IHAVE pkt
             ihave_header = struct.pack("HBBHHII", socket.htons(52305), 35, 1, socket.htons(HEADER_LEN),
@@ -91,11 +98,14 @@ def process_inbound_udp(sock):
                                        socket.htonl(0))
             ihave_pkt = ihave_header + whohas_chunk_hash
             sock.sendto(ihave_pkt, from_addr)
+            print("发送 IHAVE 报文")
 
     elif Type == 1:
         # received an IHAVE pkt
         # see what chunk the sender has
         get_chunk_hash = data[:20]
+
+        print("接收 IHAVE 报文")
 
         # send back GET pkt
         get_header = struct.pack("HBBHHII", socket.htons(52305), 35, 2, socket.htons(HEADER_LEN),
@@ -103,23 +113,29 @@ def process_inbound_udp(sock):
         get_pkt = get_header + get_chunk_hash
         sock.sendto(get_pkt, from_addr)
 
+        print("发送 GET 报文")
+
     elif Type == 2:
         # received a GET pkt
         chunk_data = config.haschunks[ex_sending_chunkhash][:MAX_PAYLOAD]
+        print("收到 GET 报文")
 
         # send back DATA
         data_header = struct.pack("HBBHHII", socket.htons(52305), 35, 3, socket.htons(HEADER_LEN),
                                   socket.htons(HEADER_LEN), socket.htonl(1), 0)
         sock.sendto(data_header + chunk_data, from_addr)
+        print("发送 DATA 报文")
 
     elif Type == 3:
         # received a DATA pkt
         ex_received_chunk[ex_downloading_chunkhash] += data
+        print("收到 DATA 报文")
 
         # send back ACK
         ack_pkt = struct.pack("HBBHHII", socket.htons(52305), 35, 4, socket.htons(HEADER_LEN), socket.htons(HEADER_LEN),
                               0, Seq)
         sock.sendto(ack_pkt, from_addr)
+        print("发送 ACK 报文")
 
         # see if finished
         if len(ex_received_chunk[ex_downloading_chunkhash]) == CHUNK_DATA_SIZE:
@@ -149,6 +165,8 @@ def process_inbound_udp(sock):
     elif Type == 4:
         # received an ACK pkt
         ack_num = socket.ntohl(Ack)
+        print("收到 ACK 报文")
+
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished
             print(f"finished sending {ex_sending_chunkhash}")
@@ -161,6 +179,7 @@ def process_inbound_udp(sock):
             data_header = struct.pack("HBBHHII", socket.htons(52305), 35, 3, socket.htons(HEADER_LEN),
                                       socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1), 0)
             sock.sendto(data_header + next_data, from_addr)
+            print("成功接收，继续发送 DATA 报文")
 
 
 def process_user_input(sock):
@@ -174,6 +193,8 @@ def process_user_input(sock):
 def peer_run(config):
     addr = (config.ip, config.port)
     sock = simsocket.SimSocket(config.identity, addr, verbose=config.verbose)
+
+    # 这里应该进行对环境的初始化操作,通过握手直到其他peer有哪些chunk
 
     try:
         while True:

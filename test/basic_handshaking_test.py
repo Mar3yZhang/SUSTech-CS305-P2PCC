@@ -1,8 +1,6 @@
-import time
-
-import pytest
-
 import grader
+import time
+import pytest
 
 
 @pytest.fixture(scope='module')
@@ -51,7 +49,7 @@ def test_send_ihave(normal_session):
 def test_send_download(normal_session):
     handshaking_session = normal_session
     assert handshaking_session.peer_list[("127.0.0.1", 48001)].send_record[("127.0.0.1", 48002)][
-               2] > 0, "Fail to send DOWLOAD"
+               2] > 0, "Fail to send DOWNLOAD"
 
 
 def test_handshaking(normal_session):
@@ -66,3 +64,4 @@ def test_handshaking(normal_session):
                3] > 0, "Fail to receive any DATA"
     assert handshaking_session.peer_list[("127.0.0.1", 48002)].recv_record[("127.0.0.1", 48001)][
                4] > 0, "Fail to receive any ACK"
+
