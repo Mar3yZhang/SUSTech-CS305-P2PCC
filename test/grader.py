@@ -6,7 +6,6 @@ import select
 import signal
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
 from signal import signal
 from threading import Thread
 

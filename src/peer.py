@@ -34,7 +34,6 @@ def process_download(sock, chunkfile, outputfile):
     """
     if DOWNLOAD is used, the peer will keep getting files until it is done
     """
-    # print('PROCESS DOWNLOAD SKELETON CODE CALLED.  Fill me in!')
     global ex_output_file
     global ex_received_chunk
     global ex_downloading_chunkhash
@@ -215,4 +214,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     config = bt_utils.BtConfig(args)
+    bt_utils.BtConfig.bt_dump_config(config)
     peer_run(config)

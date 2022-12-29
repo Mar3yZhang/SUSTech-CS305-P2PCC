@@ -5,7 +5,6 @@ import sys
 
 class BtConfig:
     def __init__(self, args):
-        self.output_file = 'output.dat'
         self.peer_list_file = args.p
         self.has_chunk_file = args.c
         self.max_conn = args.m
@@ -48,9 +47,10 @@ class BtConfig:
                 return item
         return None
 
-    def bt_dump_config(self, config):
+    @staticmethod
+    def bt_dump_config(config):
         print('CS305 PROJECT PEER')
-        print('chunk-file:     ', config.chunk_file)
+        # print('chunk-file:     ', config.chunk_file)
         print('has-chunk-file: ', config.has_chunk_file)
         print('max-conn:       ', config.max_conn)
         print('peer-identity:  ', config.identity)
