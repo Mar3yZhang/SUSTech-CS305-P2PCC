@@ -11,43 +11,51 @@ import hashlib
 import argparse
 import pickle
 
-"""
-This is CS305 project skeleton code.
-Please refer to the example files - example/dumpreceiver.py and example/dumpsender.py - to learn how to play with this skeleton.
-"""
-
 BUF_SIZE = 1400
 CHUNK_DATA_SIZE = 512 * 1024  # 512K
-HEADER_LEN = struct.calcsize("HBBHHII")  # 2+1+1+2+2+4+4
+# 报文数据部分的最大载荷
 MAX_PAYLOAD = 1024
 
+# 以网络端作为大小端打包数据
+PKT_FORMAT = '!HBBHHII'
+MAGIC = 52305
+TEAM = 35
+# 表示当前字段这个包用不到
+NO_USE = 0
+HEADER_LEN = struct.calcsize(PKT_FORMAT)
+
+# peer的个人信息
 config = None
-ex_output_file = None
-ex_received_chunk = dict()
-ex_downloading_chunkhash = ""
-ex_sending_chunkhash = ""
+# peer输出的文件名
+output_file = None
+# peer用来记录所有接收到的hash:data数据记录形成的字典
+received_chunk = dict()
+# peer正在下载的chunkhash
+downloading_chunkhash = ""
+# peer 正在发送的chunkhash
+sending_chunkhash = ""
 
 
 # 这里直接使用网络端传输有bug，没搞懂
 # HEADER_FORM = "!HBBHHII"
 
-
 def process_download(sock, chunkfile, outputfile):
     """
     if DOWNLOAD is used, the peer will keep getting files until it is done
     """
-    global ex_output_file
-    global ex_received_chunk
-    global ex_downloading_chunkhash
+    global PKT_FORMAT, MAGIC, TEAM, HEADER_LEN, NO_USE
+    global output_file
+    global received_chunk
+    global downloading_chunkhash
 
-    ex_output_file = outputfile
+    output_file = outputfile
     # Step 1: read chunkhash to be downloaded from chunkfile
     download_hash = bytes()
     with open(chunkfile, 'r') as cf:
         # TODO:这里需要考虑download文件里不只有一个chunkhash的情况
         index, datahash_str = cf.readline().strip().split(" ")
-        ex_received_chunk[datahash_str] = bytes()
-        ex_downloading_chunkhash = datahash_str
+        received_chunk[datahash_str] = bytes()
+        downloading_chunkhash = datahash_str
 
         # hex_str to bytes
         datahash = bytes.fromhex(datahash_str)
@@ -59,8 +67,17 @@ def process_download(sock, chunkfile, outputfile):
     # |2byte  header len  |2byte pkt len |
     # |      4byte  seq                  |
     # |      4byte  ack                  |
-    whohas_header = struct.pack("HBBHHII", 52305, 35, 0, HEADER_LEN,
-                                HEADER_LEN + len(download_hash), 0, 0)
+    #                +
+    # |      ?byte  payload              |
+
+    whohas_header = struct.pack(PKT_FORMAT,
+                                MAGIC,
+                                TEAM,
+                                0,
+                                HEADER_LEN,
+                                HEADER_LEN + len(download_hash),
+                                NO_USE,
+                                NO_USE)
     whohas_pkt = whohas_header + download_hash
 
     # Step3: flooding whohas to all peers in peer list
@@ -71,13 +88,17 @@ def process_download(sock, chunkfile, outputfile):
             print(f"发送 WHOHAS 报文给peer: {p}")
 
 
+# 处理到来的udp报文
 def process_inbound_udp(sock):
     # Receive pkt
     global config
-    global ex_sending_chunkhash
+    global output_file
+    global sending_chunkhash
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
-    Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack("HBBHHII", pkt[:HEADER_LEN])
+    # udp packet 的 header部分
+    Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack(PKT_FORMAT, pkt[:HEADER_LEN])
+    # udp packet 的 data部分
     data = pkt[HEADER_LEN:]
     if Type == 0:
         # received an WHOHAS pkt
@@ -88,14 +109,19 @@ def process_inbound_udp(sock):
         whohas_chunk_hash = data[:20]
         # bytes to hex_str
         chunkhash_str = bytes.hex(whohas_chunk_hash)
-        ex_sending_chunkhash = chunkhash_str
+        sending_chunkhash = chunkhash_str
 
         print(f"received whohas: {chunkhash_str}, current peer has: {list(config.haschunks.keys())}")
         if chunkhash_str in config.haschunks:
             # send back IHAVE pkt
-            ihave_header = struct.pack("HBBHHII", socket.htons(52305), 35, 1, socket.htons(HEADER_LEN),
-                                       socket.htons(HEADER_LEN + len(whohas_chunk_hash)), socket.htonl(0),
-                                       socket.htonl(0))
+            ihave_header = struct.pack(PKT_FORMAT,
+                                       MAGIC,
+                                       TEAM,
+                                       1,
+                                       HEADER_LEN,
+                                       HEADER_LEN + len(whohas_chunk_hash),
+                                       NO_USE,
+                                       NO_USE)
             ihave_pkt = ihave_header + whohas_chunk_hash
             sock.sendto(ihave_pkt, from_addr)
             print("发送 IHAVE 报文")
@@ -108,8 +134,14 @@ def process_inbound_udp(sock):
         print("接收 IHAVE 报文")
 
         # send back GET pkt
-        get_header = struct.pack("HBBHHII", socket.htons(52305), 35, 2, socket.htons(HEADER_LEN),
-                                 socket.htons(HEADER_LEN + len(get_chunk_hash)), socket.htonl(0), socket.htonl(0))
+        get_header = struct.pack(PKT_FORMAT,
+                                 MAGIC,
+                                 TEAM,
+                                 2,
+                                 HEADER_LEN,
+                                 HEADER_LEN + len(get_chunk_hash),
+                                 NO_USE,
+                                 NO_USE)
         get_pkt = get_header + get_chunk_hash
         sock.sendto(get_pkt, from_addr)
 
@@ -117,51 +149,64 @@ def process_inbound_udp(sock):
 
     elif Type == 2:
         # received a GET pkt
-        chunk_data = config.haschunks[ex_sending_chunkhash][:MAX_PAYLOAD]
+        chunk_data = config.haschunks[sending_chunkhash][:MAX_PAYLOAD]
         print("收到 GET 报文")
 
         # send back DATA
-        data_header = struct.pack("HBBHHII", socket.htons(52305), 35, 3, socket.htons(HEADER_LEN),
-                                  socket.htons(HEADER_LEN), socket.htonl(1), 0)
+        data_header = struct.pack(PKT_FORMAT,
+                                  MAGIC,
+                                  TEAM,
+                                  3,
+                                  HEADER_LEN,
+                                  HEADER_LEN + len(chunk_data),
+                                  1,
+                                  NO_USE)
         sock.sendto(data_header + chunk_data, from_addr)
         print("发送 DATA 报文")
 
     elif Type == 3:
         # received a DATA pkt
-        ex_received_chunk[ex_downloading_chunkhash] += data
+        received_chunk[downloading_chunkhash] += data
         print("收到 DATA 报文")
 
         # send back ACK
-        ack_pkt = struct.pack("HBBHHII", socket.htons(52305), 35, 4, socket.htons(HEADER_LEN), socket.htons(HEADER_LEN),
-                              0, Seq)
+        ack_pkt = struct.pack(PKT_FORMAT,
+                              MAGIC,
+                              TEAM,
+                              4,
+                              HEADER_LEN,
+                              HEADER_LEN,
+                              NO_USE,
+                              Seq)
         sock.sendto(ack_pkt, from_addr)
         print("发送 ACK 报文")
 
         # see if finished
-        if len(ex_received_chunk[ex_downloading_chunkhash]) == CHUNK_DATA_SIZE:
+        if len(received_chunk[downloading_chunkhash]) == CHUNK_DATA_SIZE:
             # finished downloading this chunkdata!
             # dump your received chunk to file in dict form using pickle
-            with open(ex_output_file, "wb") as wf:
-                pickle.dump(ex_received_chunk, wf)
+            with open(output_file, 'wb') as wf:
+                pickle.dump(received_chunk, wf)
 
             # add to this peer's haschunk:
-            config.haschunks[ex_downloading_chunkhash] = ex_received_chunk[ex_downloading_chunkhash]
+            # 将新下载的chunk加入到peer的字典里
+            config.haschunks[downloading_chunkhash] = received_chunk[downloading_chunkhash]
 
             # you need to print "GOT" when finished downloading all chunks in a DOWNLOAD file
-            print(f"GOT {ex_output_file}")
+            print(f"GOT {output_file}")
 
             # The following things are just for illustration, you do not need to print out in your design.
+            # 校验接收到的chunkhash是否相同，若相同，说明成功传输
             sha1 = hashlib.sha1()
-            sha1.update(ex_received_chunk[ex_downloading_chunkhash])
+            sha1.update(received_chunk[downloading_chunkhash])
             received_chunkhash_str = sha1.hexdigest()
-            print(f"Expected chunkhash: {ex_downloading_chunkhash}")
+            print(f"Expected chunkhash: {downloading_chunkhash}")
             print(f"Received chunkhash: {received_chunkhash_str}")
-            success = ex_downloading_chunkhash == received_chunkhash_str
-            print(f"Successful received: {success}")
+            success = downloading_chunkhash == received_chunkhash_str
             if success:
-                print("Congrats! You have completed the example!")
+                print(f"Successful received: {success}")
             else:
-                print("Example fails. Please check the example files carefully.")
+                print(f"Fail to received the chunk")
     elif Type == 4:
         # received an ACK pkt
         ack_num = socket.ntohl(Ack)
@@ -169,15 +214,23 @@ def process_inbound_udp(sock):
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished
-            print(f"finished sending {ex_sending_chunkhash}")
+            print(f"finished sending {sending_chunkhash}")
             pass
         else:
+            # 确定下一个要传输的数据段的数据
             left = ack_num * MAX_PAYLOAD
             right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
-            next_data = config.haschunks[ex_sending_chunkhash][left: right]
+            next_data = config.haschunks[sending_chunkhash][left: right]
             # send next data
-            data_header = struct.pack("HBBHHII", socket.htons(52305), 35, 3, socket.htons(HEADER_LEN),
-                                      socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1), 0)
+            # ACK字段只对ACK_pkt生效
+            data_header = struct.pack(PKT_FORMAT,
+                                      MAGIC,
+                                      TEAM,
+                                      3,
+                                      HEADER_LEN,
+                                      HEADER_LEN + len(next_data),
+                                      ack_num + 1,
+                                      NO_USE)
             sock.sendto(data_header + next_data, from_addr)
             print("成功接收，继续发送 DATA 报文")
 
