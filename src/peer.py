@@ -5,11 +5,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import select
 import util.simsocket as simsocket
 import struct
-import socket
 import util.bt_utils as bt_utils
 import hashlib
 import argparse
 import pickle
+from time import time
 
 BUF_SIZE = 1400
 CHUNK_DATA_SIZE = 512 * 1024  # 512K
@@ -35,9 +35,32 @@ downloading_chunkhash = ""
 # peer 正在发送的chunkhash
 sending_chunkhash = ""
 
+# Time Out Recording , 只在DATA和ACK的传输过程中起作用
+ALPHA: float = 0.125
+BETA: float = 0.25
+Estimated_RTT: float = 0
+Dev_RTT: float = 0
+Timeout_Interval: float = 0.25  # default: 0.25s
 
-# 这里直接使用网络端传输有bug，没搞懂
-# HEADER_FORM = "!HBBHHII"
+# 用于计时,当前START以毫秒为单位
+# 只在发送DATA的时候开始计时,接收ACK报文的时候结束计时，才为完整的RTT
+START: float = 0
+
+
+def update_timeout_interval(SampleRTT: float):
+    global ALPHA, BETA, Estimated_RTT, Dev_RTT, Timeout_Interval
+    Estimated_RTT = (1 - ALPHA) * Estimated_RTT + ALPHA * SampleRTT
+    Dev_RTT = (1 - BETA) * Dev_RTT + BETA * abs(SampleRTT - Estimated_RTT)
+    Timeout_Interval = Estimated_RTT + 4 * Dev_RTT
+
+
+def get_sample_rtt() -> float:
+    global START
+    if START == 0:
+        raise ValueError
+    else:
+        return (time() - START) * 1000
+
 
 def process_download(sock, chunkfile, outputfile):
     """
@@ -78,6 +101,8 @@ def process_download(sock, chunkfile, outputfile):
                                 HEADER_LEN + len(download_hash),
                                 NO_USE,
                                 NO_USE)
+
+    # 数据部分不用放在一起打包，而是直接通过切片操作从字节流中截取
     whohas_pkt = whohas_header + download_hash
 
     # Step3: flooding whohas to all peers in peer list
@@ -89,10 +114,22 @@ def process_download(sock, chunkfile, outputfile):
 
 
 # 处理到来的udp报文
+"""
+Packet Type: Type Code
+     WHOHAS: 0
+      IHAVE: 1
+        GET: 2
+       DATA: 3
+        ACK: 4
+"""
+
+
 def process_inbound_udp(sock):
     # Receive pkt
+    global START
     global config
     global output_file
+    global PKT_FORMAT
     global sending_chunkhash
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
@@ -105,7 +142,7 @@ def process_inbound_udp(sock):
         # see what chunk the sender has
 
         print("接收到 WHOHAS 报文")
-
+        # chunkhash的长度是20 bytes
         whohas_chunk_hash = data[:20]
         # bytes to hex_str
         chunkhash_str = bytes.hex(whohas_chunk_hash)
@@ -153,6 +190,7 @@ def process_inbound_udp(sock):
         print("收到 GET 报文")
 
         # send back DATA
+        START = time()
         data_header = struct.pack(PKT_FORMAT,
                                   MAGIC,
                                   TEAM,
@@ -161,7 +199,8 @@ def process_inbound_udp(sock):
                                   HEADER_LEN + len(chunk_data),
                                   1,
                                   NO_USE)
-        sock.sendto(data_header + chunk_data, from_addr)
+        data_pkt = data_header + chunk_data
+        sock.sendto(data_pkt, from_addr)
         print("发送 DATA 报文")
 
     elif Type == 3:
@@ -209,7 +248,10 @@ def process_inbound_udp(sock):
                 print(f"Fail to received the chunk")
     elif Type == 4:
         # received an ACK pkt
-        ack_num = socket.ntohl(Ack)
+        # TODO: 这里尝试直接使用！解析大小端
+        # ack_num = socket.ntohl(Ack)
+        ack_num = Ack
+        update_timeout_interval(get_sample_rtt())
         print("收到 ACK 报文")
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
@@ -231,8 +273,12 @@ def process_inbound_udp(sock):
                                       HEADER_LEN + len(next_data),
                                       ack_num + 1,
                                       NO_USE)
-            sock.sendto(data_header + next_data, from_addr)
+            data_pkt = data_header + next_data
+            sock.sendto(data_pkt, from_addr)
             print("成功接收，继续发送 DATA 报文")
+
+    else:
+        raise ConnectionError("错误的udp_pkt类型")
 
 
 def process_user_input(sock):
@@ -246,8 +292,6 @@ def process_user_input(sock):
 def peer_run(config):
     addr = (config.ip, config.port)
     sock = simsocket.SimSocket(config.identity, addr, verbose=config.verbose)
-
-    # 这里应该进行对环境的初始化操作,通过握手直到其他peer有哪些chunk
 
     try:
         while True:

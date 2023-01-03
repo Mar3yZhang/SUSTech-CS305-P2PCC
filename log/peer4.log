@@ -1,4 +1,4 @@
-2023-01-03 12:32:25,566 -+- PEER4_LOGGER -+- INFO -+- Start logging
-2023-01-03 12:32:25,566 -+- PEER4_LOGGER -+- INFO -+- Network simulator activated, running at ('127.0.0.1', 36466).
-2023-01-03 12:32:28,254 -+- PEER4_LOGGER -+- DEBUG -+- Receiving a type0 pkt from ('127.0.0.1', 48001) via spiffy, seq0, ack0, pkt_len36
-2023-01-03 12:32:38,252 -+- PEER4_LOGGER -+- INFO -+- socket closed
+2023-01-03 13:53:40,622 -+- PEER4_LOGGER -+- INFO -+- Start logging
+2023-01-03 13:53:40,623 -+- PEER4_LOGGER -+- INFO -+- Network simulator activated, running at ('127.0.0.1', 48679).
+2023-01-03 13:53:43,403 -+- PEER4_LOGGER -+- DEBUG -+- Receiving a type0 pkt from ('127.0.0.1', 48001) via spiffy, seq0, ack0, pkt_len36
+2023-01-03 13:53:53,402 -+- PEER4_LOGGER -+- INFO -+- socket closed
