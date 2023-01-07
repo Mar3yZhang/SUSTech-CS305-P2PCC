@@ -233,6 +233,7 @@ def process_inbound_udp(sock):
                 get_pkt = udp_pkt.get(index, pack_payload(chunkhash_str))
                 # 发送GET报文
                 sock.sendto(get_pkt, from_addr)
+                print(f'sending GET index {index} from_addr {from_addr}')
 
 
     elif Type == GET:
@@ -275,9 +276,8 @@ def process_inbound_udp(sock):
         print("发送 ACK 报文")
 
         # see if finished
-        print()
-        print(
-            f'len(receiving_chunks[downloading_index_to_chunkhash[Index]]) : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])}')
+        assert len(receiving_chunks[downloading_index_to_chunkhash[Index]]) % 1024 == 0
+        print(f'received : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])}')
         print(f'CHUNK_DATA_SIZE {CHUNK_DATA_SIZE}')
 
         if len(receiving_chunks[downloading_index_to_chunkhash[Index]]) == CHUNK_DATA_SIZE:
@@ -319,11 +319,14 @@ def process_inbound_udp(sock):
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished, 已被成功接收的文件大于chunk，相当于单个发送
             print(f"finished sending {sending_index_to_chunkhash[Index]}")
+            key_list = list()
             for key, value in unack_pkt.items():
                 index2, seq, from_addr = key
                 _time, _ = value
-                if index2 == 1:
-                    unack_pkt.pop(key)
+                if index2 == Index:
+                    key_list.append(key)
+            for key in key_list:
+                unack_pkt.pop(key)
             pass
         else:
             # 确定下一个要传输的数据段的数据
