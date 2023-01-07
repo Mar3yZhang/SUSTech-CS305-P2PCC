@@ -53,7 +53,9 @@ sending_index_to_chunkhash = dict()
 
 # sending_chunkhash = ""
 # peer 发送pkt时放入其中turple（chunkhash+seq, time），判断是否需要超时重传
-pkt_queue = list()
+
+# unack_pkt
+unack_pkt = dict()
 # 记录已经收到的pkt，chunkhash+seq : 1-收到，0-未收到
 ack_pkt_map = dict()
 
@@ -96,50 +98,14 @@ def get_sample_rtt() -> float:
 
 
 def check_overtime(sock):
-    is_ack = 1
-    no_ack = 0
-    while len(pkt_queue) != 0:
-        """
-        1. 弹出前面所有已经收到的
-        2. 判断第一个没有收到的是否超时
-        """
-        while len(pkt_queue) != 0:
-            if ack_pkt_map[pkt_queue[0][0]] == is_ack:
-                pkt_queue.pop(0)
-            else:
-                break
-        if len(pkt_queue) != 0 and time() - pkt_queue[0][1] > Timeout_Interval:
-            pkt = pkt_queue.pop(0)
-            # chunkhash 长度
-            from_addr_list = list(pkt[0].split('.')[2])
-            from_addr = tuple(from_addr_list)
-            # from_addr = bytes(pkt[0].split('.')[2].encode())
-            left = int(pkt[0].split('.')[1])
-            ack_num = int(left / MAX_PAYLOAD)
-            right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
-            # TODO: 这里会有bug,因为 sending index 会不知道
-            next_data = config.haschunks[sending_index_to_chunkhash][left: right]
-            # send next data
-            # ACK字段只对ACK_pkt生效
-            data_header = struct.pack(PKT_FORMAT,
-                                      MAGIC,
-                                      TEAM,
-                                      3,
-                                      HEADER_LEN,
-                                      HEADER_LEN + len(next_data),
-                                      ack_num + 1,
-                                      NO_USE)
-            data_pkt = data_header + next_data
-            sock.sendto(data_pkt, from_addr)
-            """
-                pkt_queue format:
-                0: str(sending_chunkhash)
-                1: str(seq_num)
-                2: from_addr tuple(ip,port)
-                3: start_time
-            """
-            pkt_queue.append((str(sending_index_to_chunkhash), str(left), from_addr, time()))
-            print(f'超时重传 {pkt[0]}')
+    # TODO：check un_ack 是否有超时
+    for key, value in unack_pkt.items():
+        ack_num, from_addr = key
+        _time, next_data = value
+        if time() - _time > Timeout_Interval:
+            # data_pkt = udp_pkt.data(next_data, ack_num)
+            sock.sendto(next_data, from_addr)
+            unack_pkt[(ack_num, from_addr)] = (time(), next_data)
 
 
 def process_download(sock, chunkfile, outputfile):
@@ -258,12 +224,6 @@ def process_inbound_udp(sock):
 
         # send back DATA
         # 建立map，对应所有需要发送的pkt
-        section_num = 0
-        while section_num * MAX_PAYLOAD <= CHUNK_DATA_SIZE:
-            ack_pkt_map[
-                str(sending_index_to_chunkhash[Index]) + '.' + str(section_num * MAX_PAYLOAD) + '.' + str(
-                    from_addr)] = 0
-            section_num += 1
 
         START = time()
 
@@ -277,9 +237,7 @@ def process_inbound_udp(sock):
 
         # 发送Data报文
         sock.sendto(data_pkt, from_addr)
-
-        pkt_queue.append((str(sending_index_to_chunkhash[Index]), str(0), from_addr, time()))
-        print("发送 DATA 报文")
+        unack_pkt[(1, from_addr)] = (time(), data_pkt)
 
     elif Type == DATA:
         # 收到DATA报文，这里需要判断这个报文来自的chunk对饮的chunkhash
@@ -331,12 +289,14 @@ def process_inbound_udp(sock):
         # 收到ACK报文
         ack_num = Ack
 
-        update_timeout_interval(get_sample_rtt())
+        # update_timeout_interval(get_sample_rtt())
         print("收到 ACK 报文")
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished, 已被成功接收的文件大于chunk，相当于单个发送
             print(f"finished sending {sending_index_to_chunkhash[Index]}")
+            # TODO: 未考虑并发情景
+            unack_pkt.clear()
             pass
         else:
             # 确定下一个要传输的数据段的数据
@@ -348,11 +308,12 @@ def process_inbound_udp(sock):
             # 封装Data报文
             data_pkt = udp_pkt.data(Index, ack_num + 1, next_data)
 
+            unack_pkt[(ack_num + 1, from_addr)] = (time(), data_pkt)
+            unack_pkt.pop((ack_num, from_addr))
+            print(f"成功接收，继续发送 DATA 报文 seq {ack_num + 1}")
             # 发送Data报文
             sock.sendto(data_pkt, from_addr)
 
-            ack_pkt_map[str(sending_index_to_chunkhash[Index]) + '.' + str(left) + '.' + str(from_addr)] += 1
-            pkt_queue.append((str(sending_index_to_chunkhash[Index]), str(left), from_addr, time()))
             print("成功接收，继续发送 DATA 报文")
 
     else:
