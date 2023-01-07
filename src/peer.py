@@ -1,5 +1,6 @@
 import os
 import sys
+
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import select
 import util.simsocket as simsocket
@@ -9,11 +10,20 @@ import hashlib
 import argparse
 import pickle
 from time import time
+from packet import udp_pkt
+
+# 报文类型
+WHOHAS = 0
+IHAVE = 1
+GET = 2
+DATA = 3
+ACK = 4
+DENIED = 5
 
 BUF_SIZE = 1400
-CHUNK_DATA_SIZE = 512 * 1024  # 512K
-# 报文数据部分的最大载荷
+CHUNK_DATA_SIZE = 512 * 1024
 MAX_PAYLOAD = 1024
+HEADER_LEN = struct.calcsize("!HBBHHII")
 
 # 以网络端作为大小端打包数据
 PKT_FORMAT = '!HBBHHII'
@@ -21,7 +31,6 @@ MAGIC = 52305
 TEAM = 35
 # 表示当前字段这个包用不到
 NO_USE = 0
-HEADER_LEN = struct.calcsize(PKT_FORMAT)
 
 # peer的个人信息
 config = None
@@ -45,6 +54,8 @@ Timeout_Interval: float = 0.25  # default: 0.25s
 # 只在发送DATA的时候开始计时,接收ACK报文的时候结束计时，才为完整的RTT
 START: float = 0
 
+
+# 滑动窗口协议相关
 
 def update_timeout_interval(SampleRTT: float):
     global ALPHA, BETA, Estimated_RTT, Dev_RTT, Timeout_Interval
@@ -92,17 +103,18 @@ def process_download(sock, chunkfile, outputfile):
     #                +
     # |      ?byte  payload              |
 
-    whohas_header = struct.pack(PKT_FORMAT,
-                                MAGIC,
-                                TEAM,
-                                0,
-                                HEADER_LEN,
-                                HEADER_LEN + len(download_hash),
-                                NO_USE,
-                                NO_USE)
-
     # 数据部分不用放在一起打包，而是直接通过切片操作从字节流中截取
-    whohas_pkt = whohas_header + download_hash
+
+    # whohas_header = struct.pack(PKT_FORMAT,
+    #                             MAGIC,
+    #                             TEAM,
+    #                             0,
+    #                             HEADER_LEN,
+    #                             HEADER_LEN + len(download_hash),
+    #                             NO_USE,
+    #                             NO_USE)
+    # whohas_pkt = whohas_header + download_hash
+    whohas_pkt = udp_pkt.whohas(download_hash)
 
     # Step3: flooding whohas to all peers in peer list
     peer_list = config.peers
@@ -150,15 +162,16 @@ def process_inbound_udp(sock):
         print(f"received whohas: {chunkhash_str}, current peer has: {list(config.haschunks.keys())}")
         if chunkhash_str in config.haschunks:
             # send back IHAVE pkt
-            ihave_header = struct.pack(PKT_FORMAT,
-                                       MAGIC,
-                                       TEAM,
-                                       1,
-                                       HEADER_LEN,
-                                       HEADER_LEN + len(whohas_chunk_hash),
-                                       NO_USE,
-                                       NO_USE)
-            ihave_pkt = ihave_header + whohas_chunk_hash
+            # ihave_header = struct.pack(PKT_FORMAT,
+            #                            MAGIC,
+            #                            TEAM,
+            #                            1,
+            #                            HEADER_LEN,
+            #                            HEADER_LEN + len(whohas_chunk_hash),
+            #                            NO_USE,
+            #                            NO_USE)
+            # ihave_pkt = ihave_header + whohas_chunk_hash
+            ihave_pkt = udp_pkt.ihave(whohas_chunk_hash)
             sock.sendto(ihave_pkt, from_addr)
             print("发送 IHAVE 报文")
 
@@ -170,15 +183,16 @@ def process_inbound_udp(sock):
         print("接收 IHAVE 报文")
 
         # send back GET pkt
-        get_header = struct.pack(PKT_FORMAT,
-                                 MAGIC,
-                                 TEAM,
-                                 2,
-                                 HEADER_LEN,
-                                 HEADER_LEN + len(get_chunk_hash),
-                                 NO_USE,
-                                 NO_USE)
-        get_pkt = get_header + get_chunk_hash
+        # get_header = struct.pack(PKT_FORMAT,
+        #                          MAGIC,
+        #                          TEAM,
+        #                          2,
+        #                          HEADER_LEN,
+        #                          HEADER_LEN + len(get_chunk_hash),
+        #                          NO_USE,
+        #                          NO_USE)
+        # get_pkt = get_header + get_chunk_hash
+        get_pkt = udp_pkt.get(get_chunk_hash)
         sock.sendto(get_pkt, from_addr)
 
         print("发送 GET 报文")
@@ -190,15 +204,16 @@ def process_inbound_udp(sock):
 
         # send back DATA
         START = time()
-        data_header = struct.pack(PKT_FORMAT,
-                                  MAGIC,
-                                  TEAM,
-                                  3,
-                                  HEADER_LEN,
-                                  HEADER_LEN + len(chunk_data),
-                                  1,
-                                  NO_USE)
-        data_pkt = data_header + chunk_data
+        # data_header = struct.pack(PKT_FORMAT,
+        #                           MAGIC,
+        #                           TEAM,
+        #                           3,
+        #                           HEADER_LEN,
+        #                           HEADER_LEN + len(chunk_data),
+        #                           1,
+        #                           NO_USE)
+        # data_pkt = data_header + chunk_data
+        data_pkt = udp_pkt.data(chunk_data, 1)
         sock.sendto(data_pkt, from_addr)
         print("发送 DATA 报文")
 
@@ -208,14 +223,15 @@ def process_inbound_udp(sock):
         print("收到 DATA 报文")
 
         # send back ACK
-        ack_pkt = struct.pack(PKT_FORMAT,
-                              MAGIC,
-                              TEAM,
-                              4,
-                              HEADER_LEN,
-                              HEADER_LEN,
-                              NO_USE,
-                              Seq)
+        # ack_pkt = struct.pack(PKT_FORMAT,
+        #                       MAGIC,
+        #                       TEAM,
+        #                       4,
+        #                       HEADER_LEN,
+        #                       HEADER_LEN,
+        #                       NO_USE,
+        #                       Seq)
+        ack_pkt = udp_pkt.ack(Seq)
         sock.sendto(ack_pkt, from_addr)
         print("发送 ACK 报文")
 

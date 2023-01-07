@@ -70,6 +70,7 @@ def drop_session():
     return drop_session, success
 
 
+# 这里的测试尝试以RDT的形式发送数据，看能不能生成目标数据
 def test_finish(drop_session):
     session, success = drop_session
     assert success == True, "Fail to complete transfer or timeout"
