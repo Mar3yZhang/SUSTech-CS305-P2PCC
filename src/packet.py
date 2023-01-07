@@ -1,10 +1,10 @@
-from peer import *
+from config import *
 
 
 class udp_pkt:
     """
         The format of p2p packet format is listed below.
-    
+
             0                   1                   2                   3
             0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+

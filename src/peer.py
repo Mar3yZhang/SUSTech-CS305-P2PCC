@@ -4,33 +4,13 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import select
 import util.simsocket as simsocket
-import struct
 import util.bt_utils as bt_utils
 import hashlib
 import argparse
 import pickle
 from time import time
 from packet import udp_pkt
-
-# 报文类型
-WHOHAS = 0
-IHAVE = 1
-GET = 2
-DATA = 3
-ACK = 4
-DENIED = 5
-
-BUF_SIZE = 1400
-CHUNK_DATA_SIZE = 512 * 1024
-MAX_PAYLOAD = 1024
-HEADER_LEN = struct.calcsize("!HBBHHII")
-
-# 以网络端作为大小端打包数据
-PKT_FORMAT = '!HBBHHII'
-MAGIC = 52305
-TEAM = 35
-# 表示当前字段这个包用不到
-NO_USE = 0
+from config import *
 
 # peer的个人信息
 config = None
@@ -42,13 +22,16 @@ received_chunk = dict()
 downloading_chunkhash = ""
 # peer 正在发送的chunkhash
 sending_chunkhash = ""
+# peer 发送pkt时放入其中turple（chunkhash+seq, time），判断是否需要超时重传
+pkt_queue = list()
+# 记录已经收到的pkt，chunkhash+seq : 1-收到，0-未收到
+ack_pkt_map = dict()
 
 # Time Out Recording , 只在DATA和ACK的传输过程中起作用
-ALPHA: float = 0.125
-BETA: float = 0.25
+
 Estimated_RTT: float = 0
 Dev_RTT: float = 0
-Timeout_Interval: float = 0.25  # default: 0.25s
+Timeout_Interval: float = 0.1  # default: 0.1s
 
 # 用于计时,当前START以毫秒为单位
 # 只在发送DATA的时候开始计时,接收ACK报文的时候结束计时，才为完整的RTT
@@ -70,6 +53,52 @@ def get_sample_rtt() -> float:
         raise ValueError
     else:
         return (time() - START) * 1000
+
+
+def check_overtime(sock):
+    is_ack = 1
+    no_ack = 0
+    while len(pkt_queue) != 0:
+        """
+        1. 弹出前面所有已经收到的
+        2. 判断第一个没有收到的是否超时
+        """
+        while len(pkt_queue) != 0:
+            if ack_pkt_map[pkt_queue[0][0]] == is_ack:
+                pkt_queue.pop(0)
+            else:
+                break
+        if len(pkt_queue) != 0 and time() - pkt_queue[0][1] > Timeout_Interval:
+            pkt = pkt_queue.pop(0)
+            # chunkhash 长度
+            from_addr_list = list(pkt[0].split('.')[2])
+            from_addr = tuple(from_addr_list)
+            # from_addr = bytes(pkt[0].split('.')[2].encode())
+            left = int(pkt[0].split('.')[1])
+            ack_num = int(left / MAX_PAYLOAD)
+            right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
+            next_data = config.haschunks[sending_chunkhash][left: right]
+            # send next data
+            # ACK字段只对ACK_pkt生效
+            data_header = struct.pack(PKT_FORMAT,
+                                      MAGIC,
+                                      TEAM,
+                                      3,
+                                      HEADER_LEN,
+                                      HEADER_LEN + len(next_data),
+                                      ack_num + 1,
+                                      NO_USE)
+            data_pkt = data_header + next_data
+            sock.sendto(data_pkt, from_addr)
+            """
+                pkt_queue format:
+                0: str(sending_chunkhash)
+                1: str(seq_num)
+                2: from_addr tuple(ip,port)
+                3: start_time
+            """
+            pkt_queue.append((str(sending_chunkhash), str(left), from_addr, time()))
+            print(f'超时重传 {pkt[0]}')
 
 
 def process_download(sock, chunkfile, outputfile):
@@ -203,6 +232,12 @@ def process_inbound_udp(sock):
         print("收到 GET 报文")
 
         # send back DATA
+        # 建立map，对应所有需要发送的pkt
+        section_num = 0
+        while section_num * MAX_PAYLOAD <= CHUNK_DATA_SIZE:
+            ack_pkt_map[str(sending_chunkhash) + '.' + str(section_num * MAX_PAYLOAD) + '.' + str(from_addr)] = 0
+            section_num += 1
+
         START = time()
         # data_header = struct.pack(PKT_FORMAT,
         #                           MAGIC,
@@ -215,6 +250,7 @@ def process_inbound_udp(sock):
         # data_pkt = data_header + chunk_data
         data_pkt = udp_pkt.data(chunk_data, 1)
         sock.sendto(data_pkt, from_addr)
+        pkt_queue.append((str(sending_chunkhash), str(0), from_addr, time()))
         print("发送 DATA 报文")
 
     elif Type == 3:
@@ -270,7 +306,7 @@ def process_inbound_udp(sock):
         print("收到 ACK 报文")
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
-            # finished
+            # finished, 已被成功接收的文件大于chunk，相当于单个发送
             print(f"finished sending {sending_chunkhash}")
             pass
         else:
@@ -290,6 +326,8 @@ def process_inbound_udp(sock):
                                       NO_USE)
             data_pkt = data_header + next_data
             sock.sendto(data_pkt, from_addr)
+            ack_pkt_map[str(sending_chunkhash) + '.' + str(left) + '.' + str(from_addr)] += 1
+            pkt_queue.append((str(sending_chunkhash), str(left), from_addr, time()))
             print("成功接收，继续发送 DATA 报文")
 
     else:
@@ -310,6 +348,7 @@ def peer_run(config):
 
     try:
         while True:
+            check_overtime(sock)
             # readable, writable, exceptional = select.select(inputs, outputs, inputs)
             ready = select.select([sock, sys.stdin], [], [], 0.1)
             read_ready = ready[0]
@@ -319,12 +358,15 @@ def peer_run(config):
                 if sys.stdin in read_ready:
                     process_user_input(sock)
             else:
-                # No pkt nor input arrives during this period 
+                # No pkt nor input arrives during this period
                 pass
     except KeyboardInterrupt:
         pass
     finally:
         sock.close()
+
+
+
 
 
 if __name__ == '__main__':

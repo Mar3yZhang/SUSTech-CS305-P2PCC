@@ -1,0 +1,3 @@
+2023-01-07 10:25:22,416 -+- PEER7_LOGGER -+- INFO -+- Start logging
+2023-01-07 10:25:22,417 -+- PEER7_LOGGER -+- INFO -+- Network simulator activated, running at ('127.0.0.1', 45817).
+2023-01-07 10:25:31,814 -+- PEER7_LOGGER -+- INFO -+- socket closed
