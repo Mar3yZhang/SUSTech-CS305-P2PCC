@@ -1,11 +1,11 @@
-1966 - Checker-LOGGER - INFO - Start logging
-9018 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48002), seq0, ack0
-9019 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48003), seq0, ack0
-9022 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48004), seq0, ack0
-9024 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48005), seq0, ack0
-9025 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48002) sends a type1 pkt to ('127.0.0.1', 48001), seq0, ack0
-9026 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48006), seq0, ack0
-9026 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48007), seq0, ack0
-9029 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type2 pkt to ('127.0.0.1', 48002), seq0, ack0
-9033 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48002) sends a type3 pkt to ('127.0.0.1', 48001), seq1, ack0
-9035 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type4 pkt to ('127.0.0.1', 48002), seq0, ack1
+2115 - Checker-LOGGER - INFO - Start logging
+9178 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48002), seq0, ack0
+9179 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48003), seq0, ack0
+9179 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48004), seq0, ack0
+9180 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48005), seq0, ack0
+9181 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48006), seq0, ack0
+9182 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48002) sends a type1 pkt to ('127.0.0.1', 48001), seq0, ack0
+9183 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48007), seq0, ack0
+9184 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type2 pkt to ('127.0.0.1', 48002), seq0, ack0
+9187 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48002) sends a type3 pkt to ('127.0.0.1', 48001), seq1, ack0
+9189 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type4 pkt to ('127.0.0.1', 48002), seq0, ack1

@@ -1,4 +1,5 @@
 import struct
+# 所有Peer都共享的设置参数
 
 # 报文类型
 WHOHAS = 0
