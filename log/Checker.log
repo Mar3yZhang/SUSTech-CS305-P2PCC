@@ -1,11 +1,47 @@
-2115 - Checker-LOGGER - INFO - Start logging
-9178 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48002), seq0, ack0
-9179 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48003), seq0, ack0
-9179 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48004), seq0, ack0
-9180 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48005), seq0, ack0
-9181 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48006), seq0, ack0
-9182 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48002) sends a type1 pkt to ('127.0.0.1', 48001), seq0, ack0
-9183 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type0 pkt to ('127.0.0.1', 48007), seq0, ack0
-9184 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type2 pkt to ('127.0.0.1', 48002), seq0, ack0
-9187 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48002) sends a type3 pkt to ('127.0.0.1', 48001), seq1, ack0
-9189 - Checker-LOGGER - DEBUG - ('127.0.0.1', 48001) sends a type4 pkt to ('127.0.0.1', 48002), seq0, ack1
+Creating new router 2
+Creating new router 1
+New queue added to 2: 3000000/0.1/max(1000000) to 1
+New queue added to 1: 3000000/0.1/max(1000000) to 2
+Creating new router 3
+New queue added to 3: 3000000/0.1/max(1000000) to 1
+New queue added to 1: 3000000/0.1/max(1000000) to 3
+Listening on 33108...
+spiffy_header nodeID: 1
+Router 1: recv pkt at 1673074708.47028 dest for 127.0.0.1:48002 (node '2')
+Enqueued packet bound for 2, 1673074708.5706
+spiffy_header nodeID: 1
+Router 1: recv pkt at 1673074708.47146 dest for 127.0.0.1:48003 (node '3')
+Enqueued packet bound for 3, 1673074708.57178
+Router 2: recv pkt at 1673074708.57084 dest for 127.0.0.1:48002 (node '2')
+Sending packet from router 2 to 127.0.0.1:48002
+Router 3: recv pkt at 1673074708.57188 dest for 127.0.0.1:48003 (node '3')
+Sending packet from router 3 to 127.0.0.1:48003
+spiffy_header nodeID: 2
+Router 2: recv pkt at 1673074708.57323 dest for 127.0.0.1:48001 (node '1')
+Enqueued packet bound for 1, 1673074708.67344
+Router 1: recv pkt at 1673074708.67364 dest for 127.0.0.1:48001 (node '1')
+Sending packet from router 1 to 127.0.0.1:48001
+spiffy_header nodeID: 1
+Router 1: recv pkt at 1673074708.67613 dest for 127.0.0.1:48002 (node '2')
+Enqueued packet bound for 2, 1673074708.77633
+Router 2: recv pkt at 1673074708.77655 dest for 127.0.0.1:48002 (node '2')
+Sending packet from router 2 to 127.0.0.1:48002
+spiffy_header nodeID: 2
+Router 2: recv pkt at 1673074708.77988 dest for 127.0.0.1:48001 (node '1')
+Enqueued packet bound for 1, 1673074708.8827
+Router 1: recv pkt at 1673074708.88292 dest for 127.0.0.1:48001 (node '1')
+Sending packet from router 1 to 127.0.0.1:48001
+spiffy_header nodeID: 1
+Router 1: recv pkt at 1673074708.88516 dest for 127.0.0.1:48002 (node '2')
+Enqueued packet bound for 2, 1673074708.98524
+Router 2: recv pkt at 1673074708.98544 dest for 127.0.0.1:48002 (node '2')
+Sending packet from router 2 to 127.0.0.1:48002
+Last time: 1673074700.47574
+Router 1: 13.4974412816607 bytes/sec
+Queue 1->2: 0 packets dropped, 0 still in queue
+Queue 1->3: 0 packets dropped, 0 still in queue
+Router 2: 2.184131407396 bytes/sec
+Queue 2->1: 0 packets dropped, 0 still in queue
+Router 3: 1.27612172117519 bytes/sec
+Queue 3->1: 0 packets dropped, 0 still in queue
+Current time: 1673074781.97267

@@ -8,7 +8,7 @@ class udp_pkt:
             0                   1                   2                   3
             0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-           |             Magic             |     Team      |   Type Code   |
+           |             Magic             |     Index      |   Type Code  |
            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
            |         Header Length         |        Packet Length          |
            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -26,8 +26,8 @@ class udp_pkt:
         ----------
         magic : int
             To check if you correctly deal with endian issue, or to check if the packet is spoofed.
-        team : int
-            Team index.
+        index : int
+            The index of the chunkhash of the sending/receiving chunk
         type : int
             Indicate what type is this packet
         hlen : int
@@ -45,7 +45,7 @@ class udp_pkt:
 
     def __init__(self):
         self.magic = MAGIC
-        self.team = TEAM
+        self.index = NO_USE
         self.type = -1
         self.hlen = struct.calcsize(PKT_FORMAT)
         self.plen = 0
@@ -56,7 +56,7 @@ class udp_pkt:
     def make_header(self):
         return struct.pack(PKT_FORMAT,
                            self.magic,
-                           self.team,
+                           self.index,
                            self.type,
                            self.hlen,
                            self.plen,
@@ -68,8 +68,8 @@ class udp_pkt:
 
     def parse_packet(self, packet: bytes):
         header, self.payload = packet[:16], packet[16:]
-        self.magic, self.team, self.type, self.hlen, self.plen, self.seq, self.ack = struct.unpack(PKT_FORMAT,
-                                                                                                   header)
+        self.magic, self.index, self.type, self.hlen, self.plen, self.seq, self.ack = struct.unpack(PKT_FORMAT,
+                                                                                                    header)
 
     @staticmethod
     def whohas(chunkhash):
@@ -83,7 +83,7 @@ class udp_pkt:
         """
         return struct.pack(PKT_FORMAT,
                            MAGIC,
-                           TEAM,
+                           NO_USE,
                            WHOHAS,
                            HEADER_LEN,
                            HEADER_LEN + len(chunkhash),
@@ -102,7 +102,7 @@ class udp_pkt:
         """
         return struct.pack(PKT_FORMAT,
                            MAGIC,
-                           TEAM,
+                           NO_USE,
                            IHAVE,
                            HEADER_LEN,
                            HEADER_LEN + len(chunkhash),
@@ -110,18 +110,20 @@ class udp_pkt:
                            NO_USE) + chunkhash
 
     @staticmethod
-    def get(chunkhash):
+    def get(idx: int, chunkhash):
         """
             Generate GET packet
 
             Parameters
             ----------
+            idx : int
+                Index of the chunk that the pkt is sending
             chunkhash : bytes
                 The chunk peer wants to download.
         """
         return struct.pack(PKT_FORMAT,
                            MAGIC,
-                           TEAM,
+                           idx,
                            GET,
                            HEADER_LEN,
                            HEADER_LEN + len(chunkhash),
@@ -129,7 +131,7 @@ class udp_pkt:
                            NO_USE) + chunkhash
 
     @staticmethod
-    def data(chunkdata, seq: int):
+    def data(idx: int, seq: int, chunkdata: bytes):
         """
             Generate DATA packet
 
@@ -139,10 +141,12 @@ class udp_pkt:
                 The chunkdata peer needs to send
             seq : int
                 Sequence number of packet to be sent
+            idx : int
+                Index of the chunk that the pkt is sending
         """
         return struct.pack(PKT_FORMAT,
                            MAGIC,
-                           TEAM,
+                           idx,
                            DATA,
                            HEADER_LEN,
                            HEADER_LEN + len(chunkdata),
@@ -150,7 +154,7 @@ class udp_pkt:
                            NO_USE) + chunkdata
 
     @staticmethod
-    def ack(ack: int):
+    def ack(idx: int, ack: int):
         """
             Generate ACK packet
 
@@ -158,10 +162,12 @@ class udp_pkt:
             ----------
             ack : int
                 The packet peer has received
+            idx : int
+                Index of the chunk that the pkt is sending
         """
         return struct.pack(PKT_FORMAT,
                            MAGIC,
-                           TEAM,
+                           idx,
                            ACK,
                            HEADER_LEN,
                            HEADER_LEN,
