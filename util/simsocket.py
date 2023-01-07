@@ -99,7 +99,7 @@ class SimSocket:
         else:
             self.__logger.error("Error on simulator recvfrom")
 
-        return (data_bytes, from_addr)
+        return data_bytes, from_addr
 
     def __simulator_init(self, nodeid):
         simulator_env = os.getenv("SIMULATOR")

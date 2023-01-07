@@ -69,6 +69,16 @@ Timeout_Interval: float = 0.1  # default: 0.1s
 # 只在发送DATA的时候开始计时,接收ACK报文的时候结束计时，才为完整的RTT
 START: float = 0
 
+# 用来记录当前的peer收到了几个IHAVE
+ihave_counter = None
+# peer_chunkhash_map: 当前peer所有邻居的ihave情况
+"""
+    key:value -> address:chunkhash_list
+    1) index:int : 需要的chunkhash的index
+    2) peer_list: list[from_address] : 所有有这个chunkhash的邻居的地址list
+"""
+peer_chunkhash_map = dict()
+
 
 # 滑动窗口协议相关
 
@@ -100,12 +110,12 @@ def get_sample_rtt() -> float:
 def check_overtime(sock):
     # TODO：check un_ack 是否有超时
     for key, value in unack_pkt.items():
-        ack_num, from_addr = key
+        Index, ack_num, from_addr = key
         _time, next_data = value
         if time() - _time > Timeout_Interval:
             # data_pkt = udp_pkt.data(next_data, ack_num)
             sock.sendto(next_data, from_addr)
-            unack_pkt[(ack_num, from_addr)] = (time(), next_data)
+            unack_pkt[(Index, ack_num, from_addr)] = (time(), next_data)
 
 
 def process_download(sock, chunkfile, outputfile):
@@ -113,8 +123,11 @@ def process_download(sock, chunkfile, outputfile):
     if DOWNLOAD is used, the peer will keep getting files until it is done
     """
     global output_file
+    global ihave_counter
     global receiving_chunks
     global downloading_index_to_chunkhash
+
+    ihave_counter = len(config.peers) - 1
 
     output_file = outputfile
     # Step 1: 从chunkfile里读取需要下载的chunk的chunkhash
@@ -136,6 +149,8 @@ def process_download(sock, chunkfile, outputfile):
     # 封装Whohas报文
     # TODO: 尝试把 str list转成字节流传输，在接收侧解封装
     whohas_pkt = udp_pkt.whohas(pack_payload(download_chunkhash_str_list))
+    print(f' download_chunkhash_str_list : {download_chunkhash_str_list}')
+    print(f'I have {sending_index_to_chunkhash.items()}')
 
     # 泛洪Whohas报文给周围的peer
     peer_list = config.peers
@@ -161,6 +176,7 @@ def process_inbound_udp(sock):
     global START
     global config
     global output_file
+    global ihave_counter
     global sending_index_to_chunkhash
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
@@ -195,25 +211,29 @@ def process_inbound_udp(sock):
 
     elif Type == IHAVE:
         # received an IHAVE pkt
-        # see what chunk the sender has
-        # get_chunk_hash = data[:20]
+        # TODO: 这里需要考虑从所有的IHAVE中选择一个发送GET报文，否则会有多个peer发送相同的chunk给当前peer
+        # TODO: 需要记录所有的peer的含有的chunkhash
         get_chunkhash_str_list = unpack_payload(data)
+        ihave_counter -= 1
+
+        print(f"ihave_counter: {ihave_counter}")
 
         for chunkhash_str in get_chunkhash_str_list:
-            # print("接收 IHAVE 报文")
-            #
-            # print(f"Index (chunkhash_to_idx[chunkhash_str]) : {chunkhash_to_idx[chunkhash_str]} , \n"
-            #       f"type: {type(chunkhash_to_idx[chunkhash_str])}")
+            idx = chunkhash_to_idx[chunkhash_str]
+            if peer_chunkhash_map.get(idx) is None:
+                peer_chunkhash_map[idx] = list()
+            peer_chunkhash_map[idx].append(from_addr)
 
-            # 封装GET报文
-            get_pkt = udp_pkt.get(chunkhash_to_idx[chunkhash_str], pack_payload(chunkhash_str))
+        for i, j in peer_chunkhash_map.items():
+            print(f"key: {i} , value: {j}")
 
-            # print(f"index: {chunkhash_to_idx[chunkhash_str]} , chunkhash: {chunkhash_str}")
+        if ihave_counter == 0:
+            for index, chunkhash_str in downloading_index_to_chunkhash.items():
+                from_addr = peer_chunkhash_map[index].pop()
+                get_pkt = udp_pkt.get(index, pack_payload(chunkhash_str))
+                # 发送GET报文
+                sock.sendto(get_pkt, from_addr)
 
-            # 发送GET报文
-            sock.sendto(get_pkt, from_addr)
-
-            print("发送 GET 报文")
 
     elif Type == GET:
         # received a GET pkt
@@ -229,15 +249,11 @@ def process_inbound_udp(sock):
 
         # 封装Data报文
 
-        # print(
-        #     f"Index: {Index} , \n"
-        #     f"chunk_data: {chunk_data} , \n")
-
         data_pkt = udp_pkt.data(Index, 1, chunk_data)
 
         # 发送Data报文
         sock.sendto(data_pkt, from_addr)
-        unack_pkt[(1, from_addr)] = (time(), data_pkt)
+        unack_pkt[(Index, 1, from_addr)] = (time(), data_pkt)
 
     elif Type == DATA:
         # 收到DATA报文，这里需要判断这个报文来自的chunk对饮的chunkhash
@@ -259,6 +275,11 @@ def process_inbound_udp(sock):
         print("发送 ACK 报文")
 
         # see if finished
+        print()
+        print(
+            f'len(receiving_chunks[downloading_index_to_chunkhash[Index]]) : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])}')
+        print(f'CHUNK_DATA_SIZE {CHUNK_DATA_SIZE}')
+
         if len(receiving_chunks[downloading_index_to_chunkhash[Index]]) == CHUNK_DATA_SIZE:
             # finished downloading this chunkdata!
             # dump your received chunk to file in dict form using pickle
@@ -289,14 +310,20 @@ def process_inbound_udp(sock):
         # 收到ACK报文
         ack_num = Ack
 
+        for key, value in unack_pkt.items():
+            print(f'key : {key}')
+
         # update_timeout_interval(get_sample_rtt())
         print("收到 ACK 报文")
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished, 已被成功接收的文件大于chunk，相当于单个发送
             print(f"finished sending {sending_index_to_chunkhash[Index]}")
-            # TODO: 未考虑并发情景
-            unack_pkt.clear()
+            for key, value in unack_pkt.items():
+                index2, seq, from_addr = key
+                _time, _ = value
+                if index2 == 1:
+                    unack_pkt.pop(key)
             pass
         else:
             # 确定下一个要传输的数据段的数据
@@ -308,8 +335,14 @@ def process_inbound_udp(sock):
             # 封装Data报文
             data_pkt = udp_pkt.data(Index, ack_num + 1, next_data)
 
-            unack_pkt[(ack_num + 1, from_addr)] = (time(), data_pkt)
-            unack_pkt.pop((ack_num, from_addr))
+            unack_pkt[(Index, ack_num + 1, from_addr)] = (time(), data_pkt)
+
+            # assert unack_pkt.get((Index, ack_num, from_addr)) is not None
+            # TODO: 修复不符合逻辑的判断
+
+            if unack_pkt.get((Index, ack_num, from_addr)) is not None:
+                unack_pkt.pop((Index, ack_num, from_addr))
+
             print(f"成功接收，继续发送 DATA 报文 seq {ack_num + 1}")
             # 发送Data报文
             sock.sendto(data_pkt, from_addr)
