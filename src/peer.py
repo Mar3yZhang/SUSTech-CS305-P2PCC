@@ -17,8 +17,12 @@ from config import *
 config = None
 # peer输出的文件名
 output_file = None
-
+# TODO:实现发给多个peer不同chunk
 """接收方全局变量
+chunkhash_to_idx: 当前peer需要下载的chunkhash和index的映射，下载完成后pop
+        key:value -> chunkhash:index
+    1) chunkhash:str : 由chunk经sha1算法生成的哈希值
+    2) index:int : chunkhash在master.chunkhash里的序号
 receiving_chunks: 正在接收的chunk数据的字典
         index: chunkhash在master.chunkhash里的序号
     1) chunkhash:str : 由chunk经sha1算法生成的哈希值
@@ -43,7 +47,14 @@ ack_pkt_map = dict() 记录已收到的pkt
 chunk_base_ack = dict() 
     Index : base_ack
     
+维护连接的peer
+connecting_peer = dict()
+    from_addr : (last_communication_time, transfer_chunk_index)
+connect_timeout : int 
+
+    
 """
+chunkhash_to_idx = dict()
 receiving_chunks = dict()
 downloading_index_to_chunkhash = dict()
 peer_chunkhash_map = dict()
@@ -53,17 +64,15 @@ ack_pkt_map = dict()
 
 chunkIndex_base_ack = dict()
 
+connecting_peer = dict()
+connect_timeout = 3
+
 """发送方全局变量
-chunkhash_to_idx: 当前peer需要下载的chunkhash和index的映射
-        key:value -> chunkhash:index
-    1) chunkhash:str : 由chunk经sha1算法生成的哈希值
-    2) index:int : chunkhash在master.chunkhash里的序号
 sending_index_to_chunkhash : 当前peer正在发送的chunk的chunkhash的字典
         key:value -> index:chunkhash
     1) index:int : chunkhash在master.chunkhash里的序号
     2) chunkhash:str : 由chunk经sha1算法生成的哈希值
 """
-chunkhash_to_idx = dict()
 sending_index_to_chunkhash = dict()
 
 # Time Out Recording , 只在DATA和ACK的传输过程中起作用
@@ -162,6 +171,51 @@ def check_overtime(sock):
             # data_pkt = udp_pkt.data(next_data, ack_num)
             sock.sendto(next_data, from_addr)
             unack_pkt[(Index, ack_num, from_addr)] = (time(), next_data)
+
+"""
+维护peer连接与下载
+    先判断是否有断连接的，从peer_chunkhash_map中 pop 所有该peer  
+    再检查是否有未下载完的块，开始请求（需要知道
+        当前连接的peer, 传输过来的chunk_index: connecting_peer addr: (time, index)
+    ）
+    先获得需要下载的块的list（正在下载的不包括在内），然后寻找空余的peer，找到后发送GET报文
+"""
+def check_crash():
+    crash_peer = list()
+    for key, value in connecting_peer.items():
+        peer_addr = key
+        _time, index = value
+        if time() - _time > connect_timeout:
+            crash_peer.append(peer_addr)
+            # TODO 没考虑新peer加入的情况，没要求，但是可以考虑
+            for key_p, value_p in peer_chunkhash_map.items():
+                if peer_addr in value_p:
+                    value_p.pop(peer_addr)
+    for peer in crash_peer:
+        connecting_peer.pop(peer)
+
+def check_undownload(sock):
+    if len(connecting_peer) >= config.max_conn:
+        return
+    if len(chunkhash_to_idx) == len(connecting_peer):
+        return
+    wait_to_download_index = list()
+    for chunk_hash, index in chunkhash_to_idx.items():
+        wait_to_download_index.append(index)
+    for peer, value in connecting_peer.items():
+        _time, downloading_index = value
+        if downloading_index in wait_to_download_index:
+            wait_to_download_index.pop(downloading_index)
+    # 找到需要下载的index，寻找peer发送请求
+    for wait_index in wait_to_download_index:
+        peer_list = peer_chunkhash_map[wait_index]
+        for peer in peer_list:
+            if not peer in connecting_peer.keys():
+                pass
+
+
+
+
 
 # 处理到来的udp报文
 """
@@ -333,6 +387,10 @@ def process_inbound_udp(sock):
                 print(f"Successful received: {success}")
             else:
                 print(f"Fail to received the chunk")
+    #         接收之后从需要下载的字典中删去该chunk
+    #         downloading_index_to_chunkhash.pop(Index)
+    #         chunk_hash = receiving_chunks[Index]
+    #         chunkhash_to_idx.pop(chunk_hash)
 
     else:
         raise ConnectionError("错误的udp_pkt类型")
