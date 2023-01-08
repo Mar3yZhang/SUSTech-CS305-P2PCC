@@ -24,3 +24,8 @@ NO_USE = 0
 # 超时
 ALPHA: float = 0.125
 BETA: float = 0.25
+
+# 拥塞控制状态
+SS = 0
+CA = 1
+FR = 2
