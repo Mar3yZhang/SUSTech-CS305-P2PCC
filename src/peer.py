@@ -292,21 +292,23 @@ def process_inbound_udp(sock):
 
     elif Type == DATA:
         # 收到DATA报文，这里需要判断这个报文来自的chunk对饮的chunkhash
-        receiving_chunks[downloading_index_to_chunkhash[Index]] += data
         print(f"收到 DATA 报文 from {from_addr}, seq {Seq}", end="")
         # TODO 采用累积确认ack的方式
         if Seq != chunkIndex_base_ack[Index] + 1:
             print(f' dup, discard')
+            print(f'received : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])} index {Index}')
             return
         else:
             print(f' accept')
             chunkIndex_base_ack[Index] = Seq
+        receiving_chunks[downloading_index_to_chunkhash[Index]] += data
         # 封装Ack报文
         ack_pkt = udp_pkt.ack(Index, Seq)
         sock.sendto(ack_pkt, from_addr)
         # see if finished
         assert len(receiving_chunks[downloading_index_to_chunkhash[Index]]) % 1024 == 0
-        print(f'received : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])}')
+        assert len(receiving_chunks[downloading_index_to_chunkhash[Index]]) <= CHUNK_DATA_SIZE
+        print(f'received : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])} index {Index}')
         print(f'CHUNK_DATA_SIZE {CHUNK_DATA_SIZE}')
         if len(receiving_chunks[downloading_index_to_chunkhash[Index]]) == CHUNK_DATA_SIZE:
             # finished downloading this chunkdata!
