@@ -4,11 +4,14 @@
       <w>chunkdata</w>
       <w>chunkf</w>
       <w>chunkhash</w>
+      <w>cwnd</w>
       <w>hbbhhii</w>
       <w>hlen</w>
       <w>outf</w>
       <w>plen</w>
       <w>simsocket</w>
+      <w>ssthresh</w>
+      <w>unack</w>
       <w>whohas</w>
     </words>
   </dictionary>

@@ -87,9 +87,18 @@ START: float = 0
 # 用来记录当前的peer收到了几个IHAVE
 ihave_counter = None
 
+# 滑动窗口协议相关 SR
+"""发送方全局变量
+cc_dup_ack_counter : 当前peer用于流量控制的ack counter
+        key:value -> index:chunkhash
+    1) tuple(from_address,seq_num) : 唯一表示一个来自其他peer发送过来的报文
+    2) counter:int : 用来记录发送过来报文的数量
+"""
+cwnd = 1
+ssthresh = 64
+cc_dup_ack_counter = dict()
+cc_state = SS
 
-
-# 滑动窗口协议相关
 
 # 通过JSON序列化
 def pack_payload(payload) -> bytes:
@@ -162,6 +171,8 @@ def process_download(sock, chunkfile, outputfile):
 检查超时重传：
 
 """
+
+
 def check_overtime(sock):
     # TODO：check un_ack 是否有超时
     for key, value in unack_pkt.items():
@@ -172,6 +183,7 @@ def check_overtime(sock):
             sock.sendto(next_data, from_addr)
             unack_pkt[(Index, ack_num, from_addr)] = (time(), next_data)
 
+
 """
 维护peer连接与下载
     先判断是否有断连接的，从peer_chunkhash_map中 pop 所有该peer  
@@ -180,6 +192,8 @@ def check_overtime(sock):
     ）
     先获得需要下载的块的list（正在下载的不包括在内），然后寻找空余的peer，找到后发送GET报文
 """
+
+
 def check_crash():
     crash_peer = list()
     for key, value in connecting_peer.items():
@@ -193,6 +207,7 @@ def check_crash():
                     value_p.pop(peer_addr)
     for peer in crash_peer:
         connecting_peer.pop(peer)
+
 
 def check_undownload(sock):
     if len(connecting_peer) >= config.max_conn:
@@ -214,9 +229,6 @@ def check_undownload(sock):
                 pass
 
 
-
-
-
 # 处理到来的udp报文
 """
 Packet Type: Type Code
@@ -230,10 +242,13 @@ Packet Type: Type Code
 
 def process_inbound_udp(sock):
     # Receive pkt
+    global cwnd
     global START
     global config
+    global cc_state
     global output_file
     global ihave_counter
+    global cc_dup_ack_counter
     global sending_index_to_chunkhash
 
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
@@ -285,6 +300,16 @@ def process_inbound_udp(sock):
             print(f'key : {key}')
         # update_timeout_interval(get_sample_rtt())
         print(f"收到 ACK 报文 ACK {Ack}")
+
+        # 维护拥塞控制冗余ack counter
+        # 若为冗余ACK则放弃发送的判断已在 ACK 中完成
+        if cc_dup_ack_counter.get(from_addr, Seq) is None:
+            cc_dup_ack_counter[(from_addr, Seq)] = 1
+            cwnd += 1
+        else:
+            cc_dup_ack_counter[(from_addr, Seq)] += 1
+            if cc_dup_ack_counter[(from_addr, Seq)] == 4:
+                cc_state = CA
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished, 已被成功接收的文件大于chunk，相当于单个发送
