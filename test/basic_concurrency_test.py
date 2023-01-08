@@ -20,9 +20,9 @@ data3-2.fragment: chunk2
 data3-3.fragment: chunk3
 
 This testing script is equivalent to run the following commands in different shells (remember to export SIMULATOR):
-export SIMULATOR="127.0.0.1: 50323"
+export SIMULATOR="127.0.0.1: 50324"
 perl util/hupsim.pl -m test/tmp3/topo3.map -n test/tmp3/nodes3.map -p {port_number} -v 3
-perl util/hupsim.pl -m test/tmp3/topo3.map -n test/tmp3/nodes3.map -p 50323 -v 3
+perl util/hupsim.pl -m test/tmp3/topo3.map -n test/tmp3/nodes3.map -p 50324 -v 3
 
 
 python3 src/peer.py -p test/tmp3/nodes3.map -c test/tmp3/data3-1.fragment -m 100 -i 1 -t 60

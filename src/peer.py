@@ -35,6 +35,8 @@ peer_chunkhash_map: 当前peer所有邻居的ihave情况
         key:value -> address:chunkhash_list
     1) index:int : 需要的chunkhash的index
     2) peer_list: list[from_address] : 所有有这个chunkhash的邻居的地址list
+download_chunkhash_str_list: 所有待下载的chunk的chunkhash组成的list
+downloaded = list() 完成下载的chunkhash
     
 超时重传部分
 unack_pkt = dict()
@@ -59,6 +61,8 @@ chunkhash_to_idx = dict()
 receiving_chunks = dict()
 downloading_index_to_chunkhash = dict()
 peer_chunkhash_map = dict()
+download_chunkhash_str_list = list()
+downloaded = list()
 
 unack_pkt = dict()
 ack_pkt_map = dict()
@@ -80,7 +84,7 @@ sending_index_to_chunkhash = dict()
 # Time Out Recording , 只在DATA和ACK的传输过程中起作用
 Estimated_RTT: float = 0
 Dev_RTT: float = 0
-Timeout_Interval: float = 0.1  # default: 0.1s
+Timeout_Interval: float = 1  # default: 0.1s
 
 # 用于计时,当前START以毫秒为单位
 # 只在发送DATA的时候开始计时,接收ACK报文的时候结束计时，才为完整的RTT
@@ -142,8 +146,7 @@ def process_download(sock, chunkfile, outputfile):
 
     output_file = outputfile
     # Step 1: 从chunkfile里读取需要下载的chunk的chunkhash
-    # download_chunkhash_str_list: 所有待下载的chunk的chunkhash组成的list
-    download_chunkhash_str_list = list()
+
 
     with open(chunkfile, 'r') as cf:
         # TODO:这里需要考虑download文件里不只有一个chunkhash的情况
@@ -177,27 +180,30 @@ def process_download(sock, chunkfile, outputfile):
 """
 
 # TODO 系统的重传花费了很多时间，收到ack就发报文这点，有的是重复的ack，可以优化
+# TODO 需要避免对不同peer发送同一个chunk的请求
+# TODO:重传应该根据dup_ack，而且只在dup_ack=3重传，不然会对已crash的peer反复重传，这里暂时处理
 overtime_resend = dict()
 
 def check_overtime(sock):
-    # TODO：check un_ack 是否有超时
+    # check un_ack 是否有超时
+    pop_unack = list()
     for key, value in unack_pkt.items():
         Index, ack_num, from_addr = key
         _time, next_data = value
         if time() - _time > Timeout_Interval:
-            # TODO:这里重传应该根据dup_ack，而且只在dup_ack=3重传，不然会对已crash的peer反复重传，这里暂时处理
             if key in overtime_resend.keys():
                 if overtime_resend[key] > 1:
-                    # TODO 前面对不同peer发送了同一个chunk的请求，这样这里会杀死没有crash的peer
                     return
                 overtime_resend[key] += 1
-            else:
-                overtime_resend[key] = 1
-            # data_pkt = udp_pkt.data(next_data, ack_num)
+            if ack_num <= chunkIndex_base_ack[Index]:
+                pop_unack.append(key)
+                continue
+            overtime_resend[key] = 1
             print(f'overtime resend {from_addr} index {Index}')
             sock.sendto(next_data, from_addr)
             unack_pkt[(Index, ack_num, from_addr)] = (time(), next_data)
-
+    for key in pop_unack:
+        unack_pkt.pop(key)
 
 """
 维护peer连接与下载
@@ -320,6 +326,7 @@ def process_inbound_udp(sock):
         # 发送Data报文
         sock.sendto(data_pkt, from_addr)
         unack_pkt[(Index, 1, from_addr)] = (time(), data_pkt)
+        chunkIndex_base_ack[Index] = 0
 
     elif Type == ACK:
         # 收到ACK报文
@@ -331,13 +338,13 @@ def process_inbound_udp(sock):
 
         # 维护拥塞控制冗余ack counter
         # 若为冗余ACK则放弃发送的判断已在 ACK 中完成
-        if cc_dup_ack_counter.get(from_addr, Seq) is None:
-            cc_dup_ack_counter[(from_addr, Seq)] = 1
-            cwnd += 1
-        else:
-            cc_dup_ack_counter[(from_addr, Seq)] += 1
-            if cc_dup_ack_counter[(from_addr, Seq)] == 4:
-                cc_state = CA
+        # if cc_dup_ack_counter.get(from_addr, Seq) is None:
+        #     cc_dup_ack_counter[(from_addr, Seq)] = 1
+        #     cwnd += 1
+        # else:
+        #     cc_dup_ack_counter[(from_addr, Seq)] += 1
+        #     if cc_dup_ack_counter[(from_addr, Seq)] == 4:
+        #         cc_state = CA
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished, 已被成功接收的文件大于chunk，相当于单个发送
@@ -361,12 +368,13 @@ def process_inbound_udp(sock):
             data_pkt = udp_pkt.data(Index, ack_num + 1, next_data)
             unack_pkt[(Index, ack_num + 1, from_addr)] = (time(), data_pkt)
             # assert unack_pkt.get((Index, ack_num, from_addr)) is not None
-            # TODO: 修复不符合逻辑的判断 - 解释：因为有重复ACK，所以这里符合逻辑
             if unack_pkt.get((Index, ack_num, from_addr)) is not None:
                 unack_pkt.pop((Index, ack_num, from_addr))
             print(f"成功接收，继续发送 DATA 报文 seq {ack_num + 1}")
             # 发送Data报文
             sock.sendto(data_pkt, from_addr)
+            """累积确认ACK"""
+            chunkIndex_base_ack[Index] = max(Ack, chunkIndex_base_ack[Index])
 
     # 接收方 收到 IHAVE， DATA
     elif Type == IHAVE:
@@ -445,10 +453,15 @@ def process_inbound_udp(sock):
         print(f'received : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])} index {Index}')
         print(f'CHUNK_DATA_SIZE {CHUNK_DATA_SIZE}')
         if len(receiving_chunks[downloading_index_to_chunkhash[Index]]) == CHUNK_DATA_SIZE:
+            downloaded.append(downloading_index_to_chunkhash[Index])
+            if len(downloaded) != len(download_chunkhash_str_list):
+                return
             # finished downloading this chunkdata!
             # dump your received chunk to file in dict form using pickle
+            # TODO 将文件写入和检查放到外面？
             with open(output_file, 'wb') as wf:
                 pickle.dump(receiving_chunks, wf)
+
             # add to this peer's haschunk:
             # 将新下载的chunk加入到peer的字典里
             config.haschunks[downloading_index_to_chunkhash[Index]] = receiving_chunks[
@@ -457,8 +470,12 @@ def process_inbound_udp(sock):
             print(f"GOT {output_file}")
             # The following things are just for illustration, you do not need to print out in your design.
             # 校验接收到的chunkhash是否相同，若相同，说明成功传输
+            # target_hash = ["45acace8e984465459c893197e593c36daf653db", "3b68110847941b84e8d05417a5b2609122a56314"]
+            with open(output_file, "rb") as download_file:
+                download_fragment = pickle.load(download_file)
             sha1 = hashlib.sha1()
-            sha1.update(receiving_chunks[downloading_index_to_chunkhash[Index]])
+            sha1.update(download_fragment[downloading_index_to_chunkhash[Index]])
+            # sha1.update(receiving_chunks[downloading_index_to_chunkhash[Index]])
             received_chunkhash_str = sha1.hexdigest()
             print(f"Expected chunkhash: {downloading_index_to_chunkhash[Index]}")
             print(f"Received chunkhash: {received_chunkhash_str}")
@@ -475,6 +492,21 @@ def process_inbound_udp(sock):
 
     else:
         raise ConnectionError("错误的udp_pkt类型")
+
+def final_check():
+    """
+    当下载完两个chunk时打开检查
+    """
+    with open("test/tmp3/download_result.fragment", "rb") as download_file:
+        download_fragment = pickle.load(download_file)
+    target_hash = ["45acace8e984465459c893197e593c36daf653db", "3b68110847941b84e8d05417a5b2609122a56314"]
+    if len(download_fragment[target_hash[0]]) == CHUNK_DATA_SIZE and len(download_fragment[target_hash[1]]) == CHUNK_DATA_SIZE:
+        print(f'finish downloading two chunks {download_fragment.keys()}')
+        for th in target_hash:
+            sha1 = hashlib.sha1()
+            sha1.update(download_fragment[th])
+            received_hash_str = sha1.hexdigest()
+            print(f'expected {th}, actual {received_hash_str}')
 
 
 def process_user_input(sock):
@@ -505,6 +537,7 @@ def peer_run(config):
                 pass
             check_crash()
             check_undownload(sock)
+            # final_check()
     except KeyboardInterrupt:
         pass
     finally:
