@@ -4,6 +4,7 @@ import pickle
 import hashlib
 import pytest
 import os
+import concurrency_visualizer
 
 '''
 This test examines the basic function of your robustness.
@@ -16,9 +17,9 @@ data4-1.fragment: chunk1
 data4-2.fragment: chunk2
 
 This testing script is equivalent to run the following commands in different shells (remember to export SIMULATOR in each shell):
-export SIMULATOR="127.0.0.1: 50321"
-perl util/hupsim.pl -m test/tmp3/topo3.map -n test/tmp3/nodes3.map -p 50321 -v 3
-perl util/hupsim.pl -m test/tmp4/topo3.map -n test/tmp4/nodes4.map -p {port_number} -v 3
+export SIMULATOR="127.0.0.1: 50322"
+perl util/hupsim.pl -m test/tmp4/topo4.map -n test/tmp4/nodes4.map -p 50322 -v 3
+perl util/hupsim.pl -m test/tmp4/topo4.map -n test/tmp4/nodes4.map -p {port_number} -v 3
 
 
 python3 src/peer.py -p test/tmp4/nodes4.map -c test/tmp4/data4-1.fragment -m 100 -i 1
@@ -32,6 +33,7 @@ python3 src/peer.py -p test/tmp4/nodes4.map -c test/tmp4/data4-2.fragment -m 100
 python3 src/peer.py -p test/tmp4/nodes4.map -c test/tmp4/data4-2.fragment -m 100 -i 3
 '''
 
+
 @pytest.fixture(scope='module')
 def crash_session():
     success = False
@@ -40,13 +42,18 @@ def crash_session():
         os.remove("test/tmp4/download_result.fragment")
 
     stime = time.time()
-    crash_session = grader.GradingSession(grader.normal_handler, latency=0.01, spiffy=True, topo_map="test/tmp4/topo4.map", nodes_map="test/tmp4/nodes4.map")
-    crash_session.add_peer(1, "src/peer.py", "test/tmp4/nodes4.map", "test/tmp4/data4-1.fragment", 100, ("127.0.0.1", 48001), timeout=None)
-    crash_session.add_peer(2, "src/peer.py", "test/tmp4/nodes4.map", "test/tmp4/data4-2.fragment", 100, ("127.0.0.1", 48002), timeout=None)
-    crash_session.add_peer(3, "src/peer.py", "test/tmp4/nodes4.map", "test/tmp4/data4-2.fragment", 100, ("127.0.0.1", 48003), timeout=None)
+    crash_session = grader.GradingSession(grader.normal_handler, latency=0.01, spiffy=True,
+                                          topo_map="test/tmp4/topo4.map", nodes_map="test/tmp4/nodes4.map")
+    crash_session.add_peer(1, "src/peer.py", "test/tmp4/nodes4.map", "test/tmp4/data4-1.fragment", 100,
+                           ("127.0.0.1", 48001), timeout=None)
+    crash_session.add_peer(2, "src/peer.py", "test/tmp4/nodes4.map", "test/tmp4/data4-2.fragment", 100,
+                           ("127.0.0.1", 48002), timeout=None)
+    crash_session.add_peer(3, "src/peer.py", "test/tmp4/nodes4.map", "test/tmp4/data4-2.fragment", 100,
+                           ("127.0.0.1", 48003), timeout=None)
     crash_session.run_grader()
 
-    crash_session.peer_list[("127.0.0.1", 48001)].send_cmd('''DOWNLOAD test/tmp4/download_target4.chunkhash test/tmp4/download_result.fragment\n''')
+    crash_session.peer_list[("127.0.0.1", 48001)].send_cmd(
+        '''DOWNLOAD test/tmp4/download_target4.chunkhash test/tmp4/download_result.fragment\n''')
 
     time.sleep(1)
     # crash peer2
@@ -56,22 +63,24 @@ def crash_session():
         if os.path.exists("test/tmp4/download_result.fragment"):
             success = True
             break
-        elif time.time()-stime>time_max:
+        elif time.time() - stime > time_max:
             # Reached max transmission time, abort
             success = False
-            break 
+            break
 
         time.sleep(0.5)
-        
+
     for p in crash_session.peer_list.values():
         if p.process != None:
             p.terminate_peer()
-    
+
     return crash_session, success
+
 
 def test_finish(crash_session):
     session, success = crash_session
     assert success == True, "Fail to complete transfer or timeout"
+
 
 def test_content():
     with open("test/tmp4/download_result.fragment", "rb") as download_file:
@@ -87,3 +96,7 @@ def test_content():
         received_hash_str = sha1.hexdigest()
         assert th.strip() == received_hash_str.strip(), f"received data mismatch, expect hash: {target_hash}, actual: {received_hash_str}"
 
+
+def test_concurrency_vis():
+    concurrency_visualizer.analyze("log/peer1.log")
+    assert "This will be checked on your presentation" == "This will be checked on your presentation"

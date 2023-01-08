@@ -51,6 +51,7 @@ chunk_base_ack = dict()
 connecting_peer = dict()
     from_addr : (last_communication_time, transfer_chunk_index)
 connect_timeout : int 
+need_download_index : list()  process 初始化，发送get/完成传输时pop，crash发送时加入
 
     
 """
@@ -66,6 +67,7 @@ chunkIndex_base_ack = dict()
 
 connecting_peer = dict()
 connect_timeout = 3
+need_download_index = list()
 
 """发送方全局变量
 sending_index_to_chunkhash : 当前peer正在发送的chunk的chunkhash的字典
@@ -86,7 +88,6 @@ START: float = 0
 
 # 用来记录当前的peer收到了几个IHAVE
 ihave_counter = None
-
 
 
 # 滑动窗口协议相关
@@ -143,6 +144,7 @@ def process_download(sock, chunkfile, outputfile):
             downloading_index_to_chunkhash[index] = chunkhash_str
             chunkhash_to_idx[chunkhash_str] = index
             download_chunkhash_str_list.append(chunkhash_str)
+            need_download_index.append(index)
 
     # 封装Whohas报文
     # TODO: 尝试把 str list转成字节流传输，在接收侧解封装
@@ -160,17 +162,28 @@ def process_download(sock, chunkfile, outputfile):
 
 """
 检查超时重传：
-
 """
+# TODO 系统的重传花费了很多时间，收到ack就发报文这点，有的是重复的ack，可以优化
+overtime_resend = dict()
 def check_overtime(sock):
     # TODO：check un_ack 是否有超时
     for key, value in unack_pkt.items():
         Index, ack_num, from_addr = key
         _time, next_data = value
         if time() - _time > Timeout_Interval:
+            # TODO:这里重传应该根据dup_ack，而且只在dup_ack=3重传，不然会对已crash的peer反复重传，这里暂时处理
+            if key in overtime_resend.keys():
+                if overtime_resend[key] > 1:
+                    # TODO 前面对不同peer发送了同一个chunk的请求，这样这里会杀死没有crash的peer
+                    return
+                overtime_resend[key] += 1
+            else:
+                overtime_resend[key] = 1
             # data_pkt = udp_pkt.data(next_data, ack_num)
+            print(f'overtime resend {from_addr} index {Index}')
             sock.sendto(next_data, from_addr)
             unack_pkt[(Index, ack_num, from_addr)] = (time(), next_data)
+
 
 """
 维护peer连接与下载
@@ -179,7 +192,10 @@ def check_overtime(sock):
         当前连接的peer, 传输过来的chunk_index: connecting_peer addr: (time, index)
     ）
     先获得需要下载的块的list（正在下载的不包括在内），然后寻找空余的peer，找到后发送GET报文
+    
 """
+
+
 def check_crash():
     crash_peer = list()
     for key, value in connecting_peer.items():
@@ -187,17 +203,21 @@ def check_crash():
         _time, index = value
         if time() - _time > connect_timeout:
             crash_peer.append(peer_addr)
+            need_download_index.append(index)
             # TODO 没考虑新peer加入的情况，没要求，但是可以考虑
             for key_p, value_p in peer_chunkhash_map.items():
                 if peer_addr in value_p:
-                    value_p.pop(peer_addr)
+                    value_p.remove(peer_addr)
     for peer in crash_peer:
         connecting_peer.pop(peer)
 
+
 def check_undownload(sock):
+    if ihave_counter != 0:
+        return
     if len(connecting_peer) >= config.max_conn:
         return
-    if len(chunkhash_to_idx) == len(connecting_peer):
+    if len(need_download_index) == len(connecting_peer):
         return
     wait_to_download_index = list()
     for chunk_hash, index in chunkhash_to_idx.items():
@@ -205,15 +225,20 @@ def check_undownload(sock):
     for peer, value in connecting_peer.items():
         _time, downloading_index = value
         if downloading_index in wait_to_download_index:
-            wait_to_download_index.pop(downloading_index)
+            wait_to_download_index.remove(downloading_index)
     # 找到需要下载的index，寻找peer发送请求
-    for wait_index in wait_to_download_index:
+    for wait_index in need_download_index:
+        if wait_index not in peer_chunkhash_map.keys():
+            continue
         peer_list = peer_chunkhash_map[wait_index]
         for peer in peer_list:
-            if not peer in connecting_peer.keys():
-                pass
-
-
+            if peer not in connecting_peer.keys():
+                chunkhash_str = downloading_index_to_chunkhash[wait_index]
+                connecting_peer[peer] = (time(), wait_index)
+                get_pkt = udp_pkt.get(wait_index, pack_payload(chunkhash_str))
+                # chunkIndex_base_ack[wait_index] = 0
+                print(f'sending GET index {wait_index} to {peer} in crash')
+                sock.sendto(get_pkt, peer)
 
 
 
@@ -268,7 +293,7 @@ def process_inbound_udp(sock):
         chunkhash_str = unpack_payload(data)
         sending_index_to_chunkhash[Index] = chunkhash_str
         chunk_data = config.haschunks[chunkhash_str][:MAX_PAYLOAD]
-        print("收到 GET 报文 get_Index {Index}")
+        print(f"收到 GET 报文 get_Index {Index} from {from_addr}")
         # send back DATA
         # 建立map，对应所有需要发送的pkt
         START = time()
@@ -311,7 +336,7 @@ def process_inbound_udp(sock):
             # TODO: 修复不符合逻辑的判断 - 解释：因为有重复ACK，所以这里符合逻辑
             if unack_pkt.get((Index, ack_num, from_addr)) is not None:
                 unack_pkt.pop((Index, ack_num, from_addr))
-            # print(f"成功接收，继续发送 DATA 报文 seq {ack_num + 1}")
+            print(f"成功接收，继续发送 DATA 报文 seq {ack_num + 1}")
             # 发送Data报文
             sock.sendto(data_pkt, from_addr)
 
@@ -335,22 +360,48 @@ def process_inbound_udp(sock):
             print(f"key: {i} , value: {j}")
 
         if ihave_counter == 0:
-            for index, chunkhash_str in downloading_index_to_chunkhash.items():
-                from_addr = peer_chunkhash_map[index].pop()
-                get_pkt = udp_pkt.get(index, pack_payload(chunkhash_str))
-                # 发送GET报文
-                sock.sendto(get_pkt, from_addr)
-                print(f'sending GET index {index} to {from_addr}')
-                # 累积确认ack，初始化为0
-                chunkIndex_base_ack[index] = 0
+            # TODO 稀有优先，这里可以实现最少的chunk最先请求，但是还可以实现请求的peer拥有的块最少，这里可以有尽可能多个peer传输chunk过来
+            need_download_index.sort(key=lambda x: len(peer_chunkhash_map[x]))
+            sended_get = list()
+            for index in need_download_index:
+                # print(f'in need_download_index {index}')
+                chunkhash_str = downloading_index_to_chunkhash[index]
+                for addr in peer_chunkhash_map[index]:
+                    # print(f'addr {addr} index {index} conn {connecting_peer.keys()}')
+                    if addr not in connecting_peer.keys():
+                        connecting_peer[addr] = (time(), index)
+                        get_pkt = udp_pkt.get(index, pack_payload(chunkhash_str))
+                        sock.sendto(get_pkt, addr)
+                        print(f'sending GET index {index} to {addr}')
+                        sended_get.append(index)
+                        chunkIndex_base_ack[index] = 0
+                        # print(chunkIndex_base_ack)
+                        break
+            for index in sended_get:
+                need_download_index.remove(index)
+
+            # for index, chunkhash_str in downloading_index_to_chunkhash.items():
+            #     from_addr = peer_chunkhash_map[index].pop()
+            #     get_pkt = udp_pkt.get(index, pack_payload(chunkhash_str))
+            #     # 发送GET报文
+            #     sock.sendto(get_pkt, from_addr)
+            #     print(f'sending GET index {index} to {from_addr}')
+            #     # 累积确认ack，初始化为0
+            #     chunkIndex_base_ack[index] = 0
+            #     need_download_index.pop(index)
 
     elif Type == DATA:
+        connecting_peer[from_addr] = (time(), Index)
         # 收到DATA报文，这里需要判断这个报文来自的chunk对饮的chunkhash
         print(f"收到 DATA 报文 from {from_addr}, seq {Seq}", end="")
         # TODO 采用累积确认ack的方式
         if Seq != chunkIndex_base_ack[Index] + 1:
             print(f' dup, discard')
             print(f'received : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])} index {Index}')
+            # TODO 这里ack是多少没有想清楚
+            ack_pkt = udp_pkt.ack(Index, chunkIndex_base_ack[Index])
+            sock.sendto(ack_pkt, from_addr)
+            print(f'发送 ACK to {from_addr} ack {chunkIndex_base_ack[Index]}')
             return
         else:
             print(f' accept')
@@ -359,6 +410,7 @@ def process_inbound_udp(sock):
         # 封装Ack报文
         ack_pkt = udp_pkt.ack(Index, Seq)
         sock.sendto(ack_pkt, from_addr)
+        print(f"发送 ACK 报文 to {from_addr}, Ack {Seq}")
         # see if finished
         assert len(receiving_chunks[downloading_index_to_chunkhash[Index]]) % 1024 == 0
         assert len(receiving_chunks[downloading_index_to_chunkhash[Index]]) <= CHUNK_DATA_SIZE
@@ -387,7 +439,8 @@ def process_inbound_udp(sock):
                 print(f"Successful received: {success}")
             else:
                 print(f"Fail to received the chunk")
-    #         接收之后从需要下载的字典中删去该chunk
+            #         接收之后从需要下载的字典中删去该chunk
+            connecting_peer.pop(from_addr)
     #         downloading_index_to_chunkhash.pop(Index)
     #         chunk_hash = receiving_chunks[Index]
     #         chunkhash_to_idx.pop(chunk_hash)
@@ -422,6 +475,8 @@ def peer_run(config):
             else:
                 # No pkt nor input arrives during this period
                 pass
+            check_crash()
+            check_undownload(sock)
     except KeyboardInterrupt:
         pass
     finally:
