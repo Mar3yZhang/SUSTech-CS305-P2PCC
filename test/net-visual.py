@@ -56,3 +56,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     visualize_network(args.topo, args.node, args.output, args.queue)
+
+# python net-visual.py -t tmp5/topo5.map -n tmp5/nodes5.map

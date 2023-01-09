@@ -40,7 +40,7 @@ downloaded = list() 完成下载的chunkhash
     
 超时重传部分
 unack_pkt = dict()
-    (Index, ack_num, from_addr) : (time, pkt)
+    (Index, ack_num, from_addr) : (time, pkt, dup_ack)
 ack_pkt_map = dict() 记录已收到的pkt
     str(chunkhash)+str(ack_num) : 1-收到，0-未收到
 
@@ -63,14 +63,15 @@ downloading_index_to_chunkhash = dict()
 peer_chunkhash_map = dict()
 download_chunkhash_str_list = list()
 downloaded = list()
-
+# TODO 修改将dup_ack加入到unack_pkt字典中
 unack_pkt = dict()
 ack_pkt_map = dict()
+sample_RTT:float = 0.1
 
 chunkIndex_base_ack = dict()
 
 connecting_peer = dict()
-connect_timeout = 3
+connect_timeout = 3.
 need_download_index = list()
 
 """发送方全局变量
@@ -84,11 +85,12 @@ sending_index_to_chunkhash = dict()
 # Time Out Recording , 只在DATA和ACK的传输过程中起作用
 Estimated_RTT: float = 0
 Dev_RTT: float = 0
-Timeout_Interval: float = 1  # default: 0.1s
+Timeout_Interval: float = 0.5  # default: 0.1s
 
 # 用于计时,当前START以毫秒为单位
 # 只在发送DATA的时候开始计时,接收ACK报文的时候结束计时，才为完整的RTT
-START: float = 0
+# 作为单独的计时器
+START = [0, False]
 
 # 用来记录当前的peer收到了几个IHAVE
 ihave_counter = None
@@ -118,10 +120,10 @@ def unpack_payload(payload: bytes):
     return json.loads(payload)
 
 
-def update_timeout_interval(SampleRTT: float):
-    global Estimated_RTT, Dev_RTT, Timeout_Interval
-    Estimated_RTT = (1 - ALPHA) * Estimated_RTT + ALPHA * SampleRTT
-    Dev_RTT = (1 - BETA) * Dev_RTT + BETA * abs(SampleRTT - Estimated_RTT)
+def update_timeout_interval():
+    global Estimated_RTT, Dev_RTT, Timeout_Interval, sample_RTT
+    Estimated_RTT = (1 - ALPHA) * Estimated_RTT + ALPHA * sample_RTT
+    Dev_RTT = (1 - BETA) * Dev_RTT + BETA * abs(sample_RTT - Estimated_RTT)
     Timeout_Interval = Estimated_RTT + 4 * Dev_RTT
 
 
@@ -182,28 +184,30 @@ def process_download(sock, chunkfile, outputfile):
 # TODO 系统的重传花费了很多时间，收到ack就发报文这点，有的是重复的ack，可以优化
 # TODO 需要避免对不同peer发送同一个chunk的请求
 # TODO:重传应该根据dup_ack，而且只在dup_ack=3重传，不然会对已crash的peer反复重传，这里暂时处理
-overtime_resend = dict()
 
 def check_overtime(sock):
+    """计时器超时，pop所有在base_ack之下的项，然后重传超时的项"""
+    global START, Timeout_Interval
+    if START[1] and time() - START[0] > Timeout_Interval:
     # check un_ack 是否有超时
-    pop_unack = list()
-    for key, value in unack_pkt.items():
-        Index, ack_num, from_addr = key
-        _time, next_data = value
-        if time() - _time > Timeout_Interval:
-            if key in overtime_resend.keys():
-                if overtime_resend[key] > 1:
-                    return
-                overtime_resend[key] += 1
+        if_resend = False
+        pop_unack = list()
+        for key, value in unack_pkt.items():
+            Index, ack_num, from_addr = key
+            _time, next_data, dup_ack = value
             if ack_num <= chunkIndex_base_ack[Index]:
                 pop_unack.append(key)
                 continue
-            overtime_resend[key] = 1
-            print(f'overtime resend {from_addr} index {Index}')
-            sock.sendto(next_data, from_addr)
-            unack_pkt[(Index, ack_num, from_addr)] = (time(), next_data)
-    for key in pop_unack:
-        unack_pkt.pop(key)
+            if time() - _time > Timeout_Interval:
+                print(f'overtime resend {from_addr} index {Index}')
+                sock.sendto(next_data, from_addr)
+                unack_pkt[(Index, ack_num, from_addr)] = (time(), next_data, 0)
+                if_resend = True
+        if if_resend:
+            START = [time(), True]
+            Timeout_Interval *= 2
+        for key in pop_unack:
+            unack_pkt.pop(key)
 
 """
 维护peer连接与下载
@@ -221,7 +225,7 @@ def check_crash():
     for key, value in connecting_peer.items():
         peer_addr = key
         _time, index = value
-        if time() - _time > connect_timeout:
+        if time() - _time > max(connect_timeout, Timeout_Interval):
             crash_peer.append(peer_addr)
             need_download_index.append(index)
             # TODO 没考虑新peer加入的情况，没要求，但是可以考虑
@@ -280,6 +284,7 @@ def process_inbound_udp(sock):
     global START
     global config
     global cc_state
+    global sample_RTT
     global output_file
     global ihave_counter
     global cc_dup_ack_counter
@@ -320,12 +325,13 @@ def process_inbound_udp(sock):
         print(f"收到 GET 报文 get_Index {Index} from {from_addr}")
         # send back DATA
         # 建立map，对应所有需要发送的pkt
-        START = time()
+        if not START[1]:
+            START = [time(), True]
         # 封装Data报文
         data_pkt = udp_pkt.data(Index, 1, chunk_data)
         # 发送Data报文
         sock.sendto(data_pkt, from_addr)
-        unack_pkt[(Index, 1, from_addr)] = (time(), data_pkt)
+        unack_pkt[(Index, 1, from_addr)] = (time(), data_pkt, 0)
         chunkIndex_base_ack[Index] = 0
 
     elif Type == ACK:
@@ -335,6 +341,31 @@ def process_inbound_udp(sock):
             print(f'key : {key}')
         # update_timeout_interval(get_sample_rtt())
         print(f"收到 ACK 报文 ACK {Ack}")
+
+        # 只有ack>=base_ack进入, 处理超时重传事件：pop对应index下ack<=base_ack的，然后若还有未应答的开启计时器，否则关闭
+        if ack_num <= chunkIndex_base_ack[Index]:
+            return
+        if unack_pkt.get((Index, ack_num, from_addr)) is not None:
+            _time, data, _ = unack_pkt.get((Index, ack_num, from_addr))
+            sample_RTT = time() - _time
+            update_timeout_interval()
+            print(f'update timeout_interval {Timeout_Interval}')
+            unack_pkt.pop((Index, ack_num, from_addr))
+        chunkIndex_base_ack[Index] = ack_num
+        pop_ack = list()
+        start_timer = False
+        for key, value in unack_pkt.items():
+            _index, _ack_num, _ = key
+            if _index == Index:
+                if _ack_num <= chunkIndex_base_ack[Index]:
+                    pop_ack.append(key)
+                else:
+                    start_timer = True
+        for key in pop_ack:
+            unack_pkt.pop(key)
+        if start_timer:
+            START = [time(), True]
+
 
         # 维护拥塞控制冗余ack counter
         # 若为冗余ACK则放弃发送的判断已在 ACK 中完成
@@ -352,7 +383,7 @@ def process_inbound_udp(sock):
             key_list = list()
             for key, value in unack_pkt.items():
                 index2, seq, from_addr = key
-                _time, _ = value
+                _time, _, dup_ack = value
                 if index2 == Index:
                     key_list.append(key)
             for key in key_list:
@@ -366,15 +397,19 @@ def process_inbound_udp(sock):
             # send next data
             # 封装Data报文
             data_pkt = udp_pkt.data(Index, ack_num + 1, next_data)
-            unack_pkt[(Index, ack_num + 1, from_addr)] = (time(), data_pkt)
+            unack_pkt[(Index, ack_num + 1, from_addr)] = (time(), data_pkt, 0)
             # assert unack_pkt.get((Index, ack_num, from_addr)) is not None
-            if unack_pkt.get((Index, ack_num, from_addr)) is not None:
-                unack_pkt.pop((Index, ack_num, from_addr))
+
+
             print(f"成功接收，继续发送 DATA 报文 seq {ack_num + 1}")
             # 发送Data报文
+            if ack_num == 150:
+                return
             sock.sendto(data_pkt, from_addr)
-            """累积确认ACK"""
-            chunkIndex_base_ack[Index] = max(Ack, chunkIndex_base_ack[Index])
+            if not START[1]:
+                START = [time(), True]
+            # 累积确认ACK
+            # chunkIndex_base_ack[Index] = max(Ack, chunkIndex_base_ack[Index])
 
     # 接收方 收到 IHAVE， DATA
     elif Type == IHAVE:
