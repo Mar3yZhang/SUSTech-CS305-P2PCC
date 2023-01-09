@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 
@@ -46,7 +47,7 @@ ack_pkt_map = dict() 记录已收到的pkt
 
 维护接收正确性
     DATA：收到seq=base_ack+1才接收，发送ack=base_ack+1, base_ack += 1;若seq=1，加入dict中，
-chunk_base_ack = dict() 
+chunkIndex_base_ack = dict() 
     Index : base_ack
     
 维护连接的peer
@@ -55,6 +56,9 @@ connecting_peer = dict()
 connect_timeout : int 
 need_download_index : list()  process 初始化，发送get/完成传输时pop，crash发送时加入
 
+SR维护窗口部分
+received_window = dict()
+    (index, seq) : data
     
 """
 chunkhash_to_idx = dict()
@@ -74,13 +78,27 @@ connecting_peer = dict()
 connect_timeout = 3.
 need_download_index = list()
 
+received_window = dict()
+RECE_WINDSIZE : int = 10
+
 """发送方全局变量
 sending_index_to_chunkhash : 当前peer正在发送的chunk的chunkhash的字典
         key:value -> index:chunkhash
     1) index:int : chunkhash在master.chunkhash里的序号
     2) chunkhash:str : 由chunk经sha1算法生成的哈希值
+
+SR变量维护
+chunkIndex_base_ack = dict(), 发送方对于每个chunk的发送base
+    chunk_Index ： base_ack
+send_window_N = dict()
+    chunkIndex : tuple(winsize_N, next_send)
+SEND_WINDSIZE:int
 """
 sending_index_to_chunkhash = dict()
+# TODO 检查发送方是否维护chunkIndex_base_ack，作为发送base
+# TODO：在开始发送时初始化，完全收到后pop
+send_window_N = dict()
+SEND_WINDSIZE : int = 10
 
 # Time Out Recording , 只在DATA和ACK的传输过程中起作用
 Estimated_RTT: float = 0
@@ -89,7 +107,7 @@ Timeout_Interval: float = 0.5  # default: 0.1s
 
 # 用于计时,当前START以毫秒为单位
 # 只在发送DATA的时候开始计时,接收ACK报文的时候结束计时，才为完整的RTT
-# 作为单独的计时器
+# 作为单独的计时器，因为有多个chunk，所以需要每个chunk一个计时器【因为窗口什么的都是按照chunk来分的】//但是不好改，单个计时器应该也可以
 START = [0, False]
 
 # 用来记录当前的peer收到了几个IHAVE
@@ -125,14 +143,6 @@ def update_timeout_interval():
     Estimated_RTT = (1 - ALPHA) * Estimated_RTT + ALPHA * sample_RTT
     Dev_RTT = (1 - BETA) * Dev_RTT + BETA * abs(sample_RTT - Estimated_RTT)
     Timeout_Interval = Estimated_RTT + 4 * Dev_RTT
-
-
-def get_sample_rtt() -> float:
-    global START
-    if START == 0:
-        raise ValueError
-    else:
-        return (time() - START) * 1000
 
 
 def process_download(sock, chunkfile, outputfile):
@@ -178,7 +188,7 @@ def process_download(sock, chunkfile, outputfile):
 
 
 """
-检查超时重传：
+检查超时重传：这里是只有一个全局的计时器，最好是每个chunk一个全局计时器，然后超时之后只重发一个
 """
 
 # TODO 系统的重传花费了很多时间，收到ack就发报文这点，有的是重复的ack，可以优化
@@ -198,8 +208,8 @@ def check_overtime(sock):
             if ack_num <= chunkIndex_base_ack[Index]:
                 pop_unack.append(key)
                 continue
-            if time() - _time > Timeout_Interval:
-                print(f'overtime resend {from_addr} index {Index}')
+            if if_resend is False and time() - _time > Timeout_Interval:
+                print(f'overtime resend {from_addr} index {Index} ack_num {ack_num} Timeout_Interval {Timeout_Interval}')
                 sock.sendto(next_data, from_addr)
                 unack_pkt[(Index, ack_num, from_addr)] = (time(), next_data, 0)
                 if_resend = True
@@ -266,8 +276,45 @@ def check_undownload(sock):
             if not peer in connecting_peer.keys():
                 pass
 
+""""
+    chunkIndex_base_ack = dict(), 发送方对于每个chunk的发送base
+        chunk_Index ： base_ack
+    send_window_N = dict()
+        chunkIndex : [winsize_N, next_send]
+        next_send 也就是未发送的左端，ack
+    
+    send_base需要在外面维护
+"""
+def SR_send(Index, chunkhash_str, from_addr, sock):
+    #     TODO：TCP/SR 的发送方
+    # 若没有的话，就进行初始化。 对于其他的，就发送窗口内没有的
+    global chunkIndex_base_ack, SEND_WINDSIZE, MAX_PAYLOAD, send_window_N
 
-# 处理到来的udp报文
+    if Index not in chunkIndex_base_ack.keys():
+        chunkIndex_base_ack[Index] = 0
+        if SEND_WINDSIZE * MAX_PAYLOAD <= len(config.haschunks[chunkhash_str]):
+            send_window_N[Index] = [SEND_WINDSIZE, 0]
+        else:
+            # TODO 这里认为chunk_size一定会整除MAX_PAYLOAD
+            send_size = int(len(config.haschunks[chunkhash_str]) / MAX_PAYLOAD)
+            send_window_N[Index] = [send_size, 0]
+    # TODO 判断下面是否准确，边界是由切片方式决定,
+    # send_base的处理方式考虑了crash换peer的情况
+    if send_window_N[Index][1] < send_window_N[Index][0] + chunkIndex_base_ack[Index]:
+        send_base_seq = max(send_window_N[Index][1], chunkIndex_base_ack[Index])
+        send_end_seq = min(send_window_N[Index][0] + chunkIndex_base_ack[Index], int(len(config.haschunks[chunkhash_str]) / MAX_PAYLOAD))
+        print(f'SR sending index {Index} from seq {send_base_seq} to {send_end_seq} to {from_addr}')
+        for send_seq in range(send_base_seq, send_end_seq):
+            chunk_data = config.haschunks[chunkhash_str][send_seq*MAX_PAYLOAD:(send_seq+1)*MAX_PAYLOAD]
+            data_pkt = udp_pkt.data(Index, send_seq+1, chunk_data)
+            unack_pkt[(Index, send_seq + 1, from_addr)] = (time(), data_pkt, 0)
+            if send_seq == 150:
+                continue
+            sock.sendto(data_pkt, from_addr)
+        send_window_N[Index][1] = send_window_N[Index][0] + chunkIndex_base_ack[Index]
+
+
+    # 处理到来的udp报文
 """
 Packet Type: Type Code
      WHOHAS: 0
@@ -286,6 +333,8 @@ def process_inbound_udp(sock):
     global cc_state
     global sample_RTT
     global output_file
+    global SEND_WINDSIZE
+    global RECE_WINDSIZE
     global ihave_counter
     global cc_dup_ack_counter
     global sending_index_to_chunkhash
@@ -321,18 +370,19 @@ def process_inbound_udp(sock):
         # received a GET pkt
         chunkhash_str = unpack_payload(data)
         sending_index_to_chunkhash[Index] = chunkhash_str
-        chunk_data = config.haschunks[chunkhash_str][:MAX_PAYLOAD]
         print(f"收到 GET 报文 get_Index {Index} from {from_addr}")
         # send back DATA
         # 建立map，对应所有需要发送的pkt
         if not START[1]:
             START = [time(), True]
-        # 封装Data报文
-        data_pkt = udp_pkt.data(Index, 1, chunk_data)
-        # 发送Data报文
-        sock.sendto(data_pkt, from_addr)
-        unack_pkt[(Index, 1, from_addr)] = (time(), data_pkt, 0)
-        chunkIndex_base_ack[Index] = 0
+        # 停等协议
+        # chunk_data = config.haschunks[chunkhash_str][:MAX_PAYLOAD]
+        # data_pkt = udp_pkt.data(Index, 1, chunk_data)
+        # sock.sendto(data_pkt, from_addr)
+        # unack_pkt[(Index, 1, from_addr)] = (time(), data_pkt, 0)
+        # chunkIndex_base_ack[Index] = 0
+    #     TCP/SR 发送方式
+        SR_send(Index, chunkhash_str, from_addr, sock)
 
     elif Type == ACK:
         # 收到ACK报文
@@ -366,7 +416,6 @@ def process_inbound_udp(sock):
         if start_timer:
             START = [time(), True]
 
-
         # 维护拥塞控制冗余ack counter
         # 若为冗余ACK则放弃发送的判断已在 ACK 中完成
         # if cc_dup_ack_counter.get(from_addr, Seq) is None:
@@ -390,22 +439,16 @@ def process_inbound_udp(sock):
                 unack_pkt.pop(key)
             pass
         else:
-            # 确定下一个要传输的数据段的数据
-            left = ack_num * MAX_PAYLOAD
-            right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
-            next_data = config.haschunks[sending_index_to_chunkhash[Index]][left: right]
-            # send next data
-            # 封装Data报文
-            data_pkt = udp_pkt.data(Index, ack_num + 1, next_data)
-            unack_pkt[(Index, ack_num + 1, from_addr)] = (time(), data_pkt, 0)
-            # assert unack_pkt.get((Index, ack_num, from_addr)) is not None
-
-
-            print(f"成功接收，继续发送 DATA 报文 seq {ack_num + 1}")
-            # 发送Data报文
-            if ack_num == 150:
-                return
-            sock.sendto(data_pkt, from_addr)
+            # 确定下一个要传输的数据段的数据, 停等协议 TODO 因为这里每一个chunk都是512KB，在不改MAX_PAYLOAD的前提下，不需要像下面那样做处理
+            # left = ack_num * MAX_PAYLOAD
+            # right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
+            # next_data = config.haschunks[sending_index_to_chunkhash[Index]][left: right]
+            # data_pkt = udp_pkt.data(Index, ack_num + 1, next_data)
+            # unack_pkt[(Index, ack_num + 1, from_addr)] = (time(), data_pkt, 0)
+            # print(f"成功接收，继续发送 DATA 报文 seq {ack_num + 1}")
+            # sock.sendto(data_pkt, from_addr)
+            # 维护窗口，然后进行SR传输
+            SR_send(Index, sending_index_to_chunkhash[Index], from_addr, sock)
             if not START[1]:
                 START = [time(), True]
             # 累积确认ACK
@@ -445,7 +488,7 @@ def process_inbound_udp(sock):
                         sock.sendto(get_pkt, addr)
                         print(f'sending GET index {index} to {addr}')
                         sended_get.append(index)
-                        chunkIndex_base_ack[index] = 0
+                        chunkIndex_base_ack[index] = 1
                         # print(chunkIndex_base_ack)
                         break
             for index in sended_get:
@@ -464,36 +507,71 @@ def process_inbound_udp(sock):
     elif Type == DATA:
         connecting_peer[from_addr] = (time(), Index)
         # 收到DATA报文，这里需要判断这个报文来自的chunk对饮的chunkhash
-        print(f"收到 DATA 报文 from {from_addr}, seq {Seq}", end="")
-        # TODO 采用累积确认ack的方式
-        if Seq != chunkIndex_base_ack[Index] + 1:
-            print(f' dup, discard')
-            print(f'received : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])} index {Index}')
-            # TODO 这里ack是多少没有想清楚
+        print(f"收到 DATA 报文 from {from_addr}, seq {Seq}")
+
+        # TODO 采用累积确认ack的方式,使用pipeline的话这种方式就需要修改
+        # if Seq != chunkIndex_base_ack[Index] + 1:
+        #     print(f' dup, discard')
+        #     print(f'received : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])} index {Index}')
+        #     # TODO 这里ack是多少没有想清楚
+        #     ack_pkt = udp_pkt.ack(Index, chunkIndex_base_ack[Index])
+        #     sock.sendto(ack_pkt, from_addr)
+        #     print(f'发送 ACK to {from_addr} ack {chunkIndex_base_ack[Index]}')
+        #     return
+        # else:
+        #     print(f' accept')
+        #     chunkIndex_base_ack[Index] = Seq
+        # receiving_chunks[downloading_index_to_chunkhash[Index]] += data
+        # ack_pkt = udp_pkt.ack(Index, Seq)
+        # sock.sendto(ack_pkt, from_addr)
+        # print(f"发送 ACK 报文 to {from_addr}, Ack {Seq}")
+
+        # TODO 采用TCP/SR的方式接收，接收窗口内的pkt，返回必要的ACK；这里chunkIndex_base_ack表示的是rcv_base,也就是完整接收的部分
+        # TODO 这里的窗口长度怎么考虑？？
+        print(f'base_ack {chunkIndex_base_ack[Index]} ')
+        if (Seq >= chunkIndex_base_ack[Index] - RECE_WINDSIZE) and (Seq < chunkIndex_base_ack[Index]):
             ack_pkt = udp_pkt.ack(Index, chunkIndex_base_ack[Index])
             sock.sendto(ack_pkt, from_addr)
-            print(f'发送 ACK to {from_addr} ack {chunkIndex_base_ack[Index]}')
-            return
+            print(f"发送 ACK 报文 to {from_addr}, Ack {chunkIndex_base_ack[Index]} if-1")
+        elif (Seq >= chunkIndex_base_ack[Index]) and (Seq < chunkIndex_base_ack[Index] + RECE_WINDSIZE):
+            if Seq == chunkIndex_base_ack[Index]:
+                rece_data = data
+                rece_seq = Seq+1
+                pop_rece_chunks = list()
+                while (Index, rece_seq) in receiving_chunks.keys():
+                    pop_rece_chunks.append((Index, rece_seq))
+                    rece_data += receiving_chunks[(Index, rece_seq)]
+                    rece_seq += 1
+                for key in pop_rece_chunks:
+                    receiving_chunks.pop(key)
+                chunkIndex_base_ack[Index] = rece_seq
+                receiving_chunks[downloading_index_to_chunkhash[Index]] += rece_data
+                ack_pkt = udp_pkt.ack(Index, rece_seq-1)
+                sock.sendto(ack_pkt, from_addr)
+                print(f"发送 ACK 报文 to {from_addr}, Ack {rece_seq-1} if-2-1")
+            else:
+                if (Index, Seq) not in receiving_chunks.keys():
+                    receiving_chunks[(Index, Seq)] = data
+                    ack_pkt = udp_pkt.ack(Index, chunkIndex_base_ack[Index]-1)
+                    sock.sendto(ack_pkt, from_addr)
+                    print(f"发送 ACK 报文 to {from_addr}, Ack {chunkIndex_base_ack[Index]-1} if-2-2")
         else:
-            print(f' accept')
-            chunkIndex_base_ack[Index] = Seq
-        receiving_chunks[downloading_index_to_chunkhash[Index]] += data
-        # 封装Ack报文
-        ack_pkt = udp_pkt.ack(Index, Seq)
-        sock.sendto(ack_pkt, from_addr)
-        print(f"发送 ACK 报文 to {from_addr}, Ack {Seq}")
-        # see if finished
+            # print(f'其他情况的data，无动作，接收到的序号 {Seq} base_ack {chunkIndex_base_ack[Index]} if-3')
+            ack_pkt = udp_pkt.ack(Index, chunkIndex_base_ack[Index]-1)
+            sock.sendto(ack_pkt, from_addr)
+            print(f'其他情况的data, 发送 ACK to {from_addr}, Ack {chunkIndex_base_ack[Index]-1}')
+
+
+        # 判断是否接收结束
         assert len(receiving_chunks[downloading_index_to_chunkhash[Index]]) % 1024 == 0
         assert len(receiving_chunks[downloading_index_to_chunkhash[Index]]) <= CHUNK_DATA_SIZE
         print(f'received : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])} index {Index}')
         print(f'CHUNK_DATA_SIZE {CHUNK_DATA_SIZE}')
         if len(receiving_chunks[downloading_index_to_chunkhash[Index]]) == CHUNK_DATA_SIZE:
             downloaded.append(downloading_index_to_chunkhash[Index])
+            print(f'finish transfer finished {len(downloaded)} need {len(download_chunkhash_str_list)}')
             if len(downloaded) != len(download_chunkhash_str_list):
                 return
-            # finished downloading this chunkdata!
-            # dump your received chunk to file in dict form using pickle
-            # TODO 将文件写入和检查放到外面？
             with open(output_file, 'wb') as wf:
                 pickle.dump(receiving_chunks, wf)
 
@@ -521,9 +599,7 @@ def process_inbound_udp(sock):
                 print(f"Fail to received the chunk")
             #         接收之后从需要下载的字典中删去该chunk
             connecting_peer.pop(from_addr)
-    #         downloading_index_to_chunkhash.pop(Index)
-    #         chunk_hash = receiving_chunks[Index]
-    #         chunkhash_to_idx.pop(chunk_hash)
+            print(f'check resources rece_pkt {len(receiving_chunks)}')
 
     else:
         raise ConnectionError("错误的udp_pkt类型")

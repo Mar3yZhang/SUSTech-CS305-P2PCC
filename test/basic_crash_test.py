@@ -17,8 +17,8 @@ data4-1.fragment: chunk1
 data4-2.fragment: chunk2
 
 This testing script is equivalent to run the following commands in different shells (remember to export SIMULATOR in each shell):
-export SIMULATOR="127.0.0.1: 50322"
-perl util/hupsim.pl -m test/tmp4/topo4.map -n test/tmp4/nodes4.map -p 50322 -v 3
+export SIMULATOR="127.0.0.1: 50323"
+perl util/hupsim.pl -m test/tmp4/topo4.map -n test/tmp4/nodes4.map -p 50323 -v 3
 perl util/hupsim.pl -m test/tmp4/topo4.map -n test/tmp4/nodes4.map -p {port_number} -v 3
 
 
