@@ -13,6 +13,8 @@ import json
 from time import time
 from packet import udp_pkt
 from config import *
+import matplotlib.pyplot as plt
+from datetime import datetime
 
 # peer的个人信息
 config = None
@@ -120,14 +122,63 @@ cc_dup_ack_counter : 当前peer用于流量控制的ack counter
         key:value -> index:chunkhash
     1) tuple(from_address,seq_num) : 唯一表示一个来自其他peer发送过来的报文
     2) counter:int : 用来记录发送过来报文的数量
+cwnd : float, 在之后使用使取整，这里因为
 """
-cwnd = 1
+cwnd = 1.
 ssthresh = 64
-cc_dup_ack_counter = dict()
 cc_state = SS
+cc_inter_state = original
+cc_win_size = list()
+cc_time = list()
+cc_start = list()
 
+"""随着输入状态而维护一些变量，画出图，若可用，将send_window限制为cwnd
+dup_ack这里仅表示dup_ack为3的情况"""
+def cc_fsm(cc_inter):
+    global cwnd, ssthresh, cc_state, cc_inter_state, cc_start
+    cc_inter_state = cc_inter
+    if cc_state == SS:
+        if cc_inter_state == original:
+            cwnd += 1.
+            ssthresh = 64
+            cc_start = [time(), time()]
+        elif cc_inter_state == new_ACK:
+            cwnd += 1.
+        elif cc_inter_state == time_out or cc_inter_state == dup_ACK:
+            ssthresh = max(math.floor(cwnd/2), 2)
+            cwnd = 1.
+        elif cwnd >= ssthresh:
+            cc_state = CA
+        else:
+            print(f'in cc_fsm, unknown situation ss')
+    elif cc_state == CA:
+        if cc_inter_state == new_ACK:
+            cwnd = cwnd + 1/cwnd
+        elif cc_inter_state == time_out:
+            ssthresh = max(math.floor(cwnd/2), 2)
+            cwnd = 1
+        else:
+            print(f'in cc_fsm, unknown situation ca')
+    else:
+        print(f'in cc_fsm, unknown situation other')
+    if time() - cc_start[1] > 0.01:
+        cc_win_size.append(int(cwnd))
+        cc_time.append(time()-cc_start[0])
+        cc_start[1] = time()
 
-# 滑动窗口协议相关
+def draw_cwnd():
+    # plt绘图
+    now = datetime.now()
+    now_time = now.strftime("%m-%d_%H-%M")
+    plt.figure()
+    # for port, record in sessions.items():
+    #     plt.plot(record[0], record[1], ",", markersize=0.1)
+    plt.plot(cc_time, cc_win_size)
+    plt.legend(cc_time)
+    plt.xlim(0, cc_time[-1])
+    plt.xlabel(f"Time (s) {cc_time[-1]}")
+    plt.ylabel("Window Size")
+    plt.savefig(f"congestion_control_winsize_{now_time}.png")
 
 # 通过JSON序列化
 def pack_payload(payload) -> bytes:
@@ -217,6 +268,7 @@ def check_overtime(sock):
         if if_resend:
             START = [time(), True]
             Timeout_Interval *= 2
+            cc_fsm(time_out)
         for key in pop_unack:
             unack_pkt.pop(key)
 
@@ -304,15 +356,16 @@ def SR_send(Index, chunkhash_str, from_addr, sock):
     if send_window_N[Index][1] < send_window_N[Index][0] + chunkIndex_base_ack[Index]:
         send_base_seq = max(send_window_N[Index][1], chunkIndex_base_ack[Index])
         send_end_seq = min(send_window_N[Index][0] + chunkIndex_base_ack[Index], int(len(config.haschunks[chunkhash_str]) / MAX_PAYLOAD))
+        send_end_seq = min(send_end_seq, send_base_seq+int(cwnd))
         print(f'SR sending index {Index} from seq {send_base_seq} to {send_end_seq} to {from_addr}')
         for send_seq in range(send_base_seq, send_end_seq):
             chunk_data = config.haschunks[chunkhash_str][send_seq*MAX_PAYLOAD:(send_seq+1)*MAX_PAYLOAD]
             data_pkt = udp_pkt.data(Index, send_seq+1, chunk_data)
             unack_pkt[(Index, send_seq + 1, from_addr)] = (time(), data_pkt, 0)
-            if send_seq == 150:
-                continue
+            # if send_seq in [150, 151]:
+            #     continue
             sock.sendto(data_pkt, from_addr)
-        send_window_N[Index][1] = send_window_N[Index][0] + chunkIndex_base_ack[Index]
+        send_window_N[Index][1] = send_end_seq
 
 
     # 处理到来的udp报文
@@ -384,6 +437,7 @@ def process_inbound_udp(sock):
         # unack_pkt[(Index, 1, from_addr)] = (time(), data_pkt, 0)
         # chunkIndex_base_ack[Index] = 0
     #     TCP/SR 发送方式
+        cc_fsm(original)
         SR_send(Index, chunkhash_str, from_addr, sock)
 
     elif Type == ACK:
@@ -395,7 +449,11 @@ def process_inbound_udp(sock):
         print(f"收到 ACK 报文 ACK {Ack}")
 
         # 只有ack>=base_ack进入, 处理超时重传事件：pop对应index下ack<=base_ack的，然后若还有未应答的开启计时器，否则关闭
+        # 处理冗余ack的事
         if ack_num <= chunkIndex_base_ack[Index]:
+            # TODO 特判，对于最后一个包会发送
+            if ack_num*MAX_PAYLOAD > len(config.haschunks[sending_index_to_chunkhash[Index]]):
+                return
             if (Index, ack_num) not in ack_pkt.keys():
                 ack_pkt[(Index, ack_num)] = 0
             else:
@@ -408,7 +466,13 @@ def process_inbound_udp(sock):
                     data_pkt = udp_pkt.data(Index, ack_num + 1, chunk_data)
                     sock.sendto(data_pkt, from_addr)
                     unack_pkt[(Index, ack_num + 1, from_addr)] = (time(), data_pkt, 0)
+                    ack_pkt[(Index, ack_num)] = 0
+                    cc_fsm(dup_ACK)
+                else:
+                    cc_fsm(new_ACK)
             return
+        # 更新base_ack, 然后更新unack_pkt
+        cc_fsm(new_ACK)
         if unack_pkt.get((Index, ack_num, from_addr)) is not None:
             _time, data, _ = unack_pkt.get((Index, ack_num, from_addr))
             sample_RTT = time() - _time
@@ -427,7 +491,7 @@ def process_inbound_udp(sock):
                     start_timer = True
         for key in pop_ack:
             unack_pkt.pop(key)
-        # 存在未应答的报文，开启计时器，否则处理冗余ack情况
+
         if start_timer:
             START = [time(), True]
 
@@ -440,10 +504,13 @@ def process_inbound_udp(sock):
         #     cc_dup_ack_counter[(from_addr, Seq)] += 1
         #     if cc_dup_ack_counter[(from_addr, Seq)] == 4:
         #         cc_state = CA
+        if (ack_num+10) * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
+            draw_cwnd()
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished, 已被成功接收的文件大于chunk，相当于单个发送
             print(f"finished sending {sending_index_to_chunkhash[Index]}")
+
             key_list = list()
             for key, value in unack_pkt.items():
                 index2, seq, from_addr = key
@@ -544,11 +611,14 @@ def process_inbound_udp(sock):
         # TODO 采用TCP/SR的方式接收，接收窗口内的pkt，返回必要的ACK；这里chunkIndex_base_ack表示的是rcv_base,也就是完整接收的部分
         # TODO 这里的窗口长度怎么考虑？？
         print(f'base_ack {chunkIndex_base_ack[Index]} ')
+        # 在base前一个窗口
         if (Seq >= chunkIndex_base_ack[Index] - RECE_WINDSIZE) and (Seq < chunkIndex_base_ack[Index]):
-            ack_pkt = udp_pkt.ack(Index, chunkIndex_base_ack[Index])
+            ack_pkt = udp_pkt.ack(Index, chunkIndex_base_ack[Index]-1)
             sock.sendto(ack_pkt, from_addr)
-            print(f"发送 ACK 报文 to {from_addr}, Ack {chunkIndex_base_ack[Index]} if-1")
+            print(f"发送 ACK 报文 to {from_addr}, Ack {chunkIndex_base_ack[Index]-1} if-1")
+        # 在窗口中
         elif (Seq >= chunkIndex_base_ack[Index]) and (Seq < chunkIndex_base_ack[Index] + RECE_WINDSIZE):
+            # 可以将连续数据上传
             if Seq == chunkIndex_base_ack[Index]:
                 rece_data = data
                 rece_seq = Seq+1
@@ -564,6 +634,7 @@ def process_inbound_udp(sock):
                 ack_pkt = udp_pkt.ack(Index, rece_seq-1)
                 sock.sendto(ack_pkt, from_addr)
                 print(f"发送 ACK 报文 to {from_addr}, Ack {rece_seq-1} if-2-1")
+            # 放入dict中
             else:
                 if (Index, Seq) not in receiving_chunks.keys():
                     receiving_chunks[(Index, Seq)] = data
@@ -583,6 +654,9 @@ def process_inbound_udp(sock):
         print(f'received : {len(receiving_chunks[downloading_index_to_chunkhash[Index]])} index {Index}')
         print(f'CHUNK_DATA_SIZE {CHUNK_DATA_SIZE}')
         if len(receiving_chunks[downloading_index_to_chunkhash[Index]]) == CHUNK_DATA_SIZE:
+            # TODO 若一个已经下载完成了，需要判断一下
+            if downloading_index_to_chunkhash[Index] in downloaded:
+                return
             downloaded.append(downloading_index_to_chunkhash[Index])
             print(f'finish transfer finished {len(downloaded)} need {len(download_chunkhash_str_list)}')
             if len(downloaded) != len(download_chunkhash_str_list):

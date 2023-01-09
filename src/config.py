@@ -29,3 +29,9 @@ BETA: float = 0.25
 SS = 0
 CA = 1
 FR = 2
+# 其中的小状态,dup_ack表示dup_ack为3时，一般的dup_ack在外面处理
+original = 0
+new_ACK = 1
+dup_ACK = 2
+time_out = 3
+cwnd_sst = 4

@@ -54,7 +54,7 @@ def check_data():
         if data_down3[left1 * MAX_PAYLOAD:(left1 + 1) * MAX_PAYLOAD] != data_3[
                                                                           left2 * MAX_PAYLOAD:(left2 + 1) * MAX_PAYLOAD]:
             print(f'diff of data3 at left {left}')
-            left1 -= 1
+            # left1 -= 1
         left1 += 1
         left2 += 1
 

@@ -1033,3 +1033,4 @@
 2023-01-09 19:12:33,625 -+- PEER15_LOGGER -+- DEBUG -+- Receiving a type4 pkt from ('127.0.0.1', 48005) via spiffy, seq0, ack510, pkt_len16
 2023-01-09 19:12:33,646 -+- PEER15_LOGGER -+- DEBUG -+- Receiving a type4 pkt from ('127.0.0.1', 48005) via spiffy, seq0, ack511, pkt_len16
 2023-01-09 19:12:33,648 -+- PEER15_LOGGER -+- DEBUG -+- Receiving a type4 pkt from ('127.0.0.1', 48005) via spiffy, seq0, ack512, pkt_len16
+2023-01-09 19:12:47,193 -+- PEER15_LOGGER -+- INFO -+- socket closed
