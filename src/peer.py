@@ -43,6 +43,7 @@ downloaded = list() 完成下载的chunkhash
 unack_pkt = dict()
     (Index, ack_num, from_addr) : (time, pkt, dup_ack)
 ack_pkt_map = dict() 记录已收到的pkt
+    (Index, seq) : get_num
     str(chunkhash)+str(ack_num) : 1-收到，0-未收到
 
 维护接收正确性
@@ -69,7 +70,7 @@ download_chunkhash_str_list = list()
 downloaded = list()
 # TODO 修改将dup_ack加入到unack_pkt字典中
 unack_pkt = dict()
-ack_pkt_map = dict()
+ack_pkt = dict()
 sample_RTT:float = 0.1
 
 chunkIndex_base_ack = dict()
@@ -330,6 +331,7 @@ def process_inbound_udp(sock):
     global cwnd
     global START
     global config
+    global ack_pkt
     global cc_state
     global sample_RTT
     global output_file
@@ -394,6 +396,18 @@ def process_inbound_udp(sock):
 
         # 只有ack>=base_ack进入, 处理超时重传事件：pop对应index下ack<=base_ack的，然后若还有未应答的开启计时器，否则关闭
         if ack_num <= chunkIndex_base_ack[Index]:
+            if (Index, ack_num) not in ack_pkt.keys():
+                ack_pkt[(Index, ack_num)] = 0
+            else:
+                ack_pkt[(Index, ack_num)] += 1
+                if ack_pkt[(Index, ack_num)] == 3:
+                    print(f'fast retrans seq {ack_num}')
+                    left = ack_num * MAX_PAYLOAD
+                    right = left + MAX_PAYLOAD
+                    chunk_data = config.haschunks[sending_index_to_chunkhash[Index]][left:right]
+                    data_pkt = udp_pkt.data(Index, ack_num + 1, chunk_data)
+                    sock.sendto(data_pkt, from_addr)
+                    unack_pkt[(Index, ack_num + 1, from_addr)] = (time(), data_pkt, 0)
             return
         if unack_pkt.get((Index, ack_num, from_addr)) is not None:
             _time, data, _ = unack_pkt.get((Index, ack_num, from_addr))
@@ -413,6 +427,7 @@ def process_inbound_udp(sock):
                     start_timer = True
         for key in pop_ack:
             unack_pkt.pop(key)
+        # 存在未应答的报文，开启计时器，否则处理冗余ack情况
         if start_timer:
             START = [time(), True]
 
