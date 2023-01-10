@@ -161,10 +161,17 @@ def cc_fsm(cc_inter):
             print(f'in cc_fsm, unknown situation ca')
     else:
         print(f'in cc_fsm, unknown situation other')
-    if time() - cc_start[1] > 0.01:
+
+
+def cwnd_observe():
+    global cc_start
+    if len(cc_start) != 2:
+        return
+    if time() - cc_start[1] > 0.003:
         cc_win_size.append(int(cwnd))
         cc_time.append(time()-cc_start[0])
         cc_start[1] = time()
+
 
 def draw_cwnd():
     # plt绘图
@@ -174,7 +181,7 @@ def draw_cwnd():
     # for port, record in sessions.items():
     #     plt.plot(record[0], record[1], ",", markersize=0.1)
     plt.plot(cc_time, cc_win_size)
-    plt.legend(cc_time)
+    plt.legend()
     plt.xlim(0, cc_time[-1])
     plt.xlabel(f"Time (s) {cc_time[-1]}")
     plt.ylabel("Window Size")
@@ -271,6 +278,8 @@ def check_overtime(sock):
             cc_fsm(time_out)
         for key in pop_unack:
             unack_pkt.pop(key)
+    # 观察cwnd窗口变化
+    cwnd_observe()
 
 """
 维护peer连接与下载
