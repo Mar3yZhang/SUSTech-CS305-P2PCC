@@ -144,8 +144,7 @@ def cc_fsm(cc_inter):
             cc_start = [time(), time()]
         elif cwnd >= ssthresh:
             cc_state = CA
-        elif cc_inter_state == time_out:
-        # elif cc_inter_state == time_out or cc_inter_state == dup_ACK:
+        elif cc_inter_state == time_out or cc_inter_state == dup_ACK:
             ssthresh = max(math.floor(cwnd/2), 2)
             cwnd = 1.
         else:
@@ -375,8 +374,8 @@ def SR_send(Index, chunkhash_str, from_addr, sock):
             chunk_data = config.haschunks[chunkhash_str][send_seq*MAX_PAYLOAD:(send_seq+1)*MAX_PAYLOAD]
             data_pkt = udp_pkt.data(Index, send_seq+1, chunk_data)
             unack_pkt[(Index, send_seq + 1, from_addr)] = (time(), data_pkt, 0)
-            # if send_seq in [150]:
-            #     continue
+            if send_seq in [150]:
+                continue
             sock.sendto(data_pkt, from_addr)
         send_window_N[Index][1] = send_end_seq
 
@@ -471,6 +470,7 @@ def process_inbound_udp(sock):
             if (Index, ack_num) not in ack_pkt.keys():
                 ack_pkt[(Index, ack_num)] = 0
             else:
+                # TODO 关闭dup_ack, 这里关闭的话改 0
                 ack_pkt[(Index, ack_num)] += 1
                 if ack_pkt[(Index, ack_num)] == 3:
                     print(f'fast retrans seq {ack_num}')
@@ -524,8 +524,8 @@ def process_inbound_udp(sock):
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished, 已被成功接收的文件大于chunk，相当于单个发送
-            draw_cwnd()
-            sleep(1)
+            # draw_cwnd()
+            # sleep(2)
             print(f"finished sending {sending_index_to_chunkhash[Index]}")
 
             key_list = list()
@@ -674,6 +674,8 @@ def process_inbound_udp(sock):
             # TODO 若一个已经下载完成了，需要判断一下
             if downloading_index_to_chunkhash[Index] in downloaded:
                 return
+            draw_cwnd()
+            # sleep(2)
             downloaded.append(downloading_index_to_chunkhash[Index])
             print(f'finish transfer finished {len(downloaded)} need {len(download_chunkhash_str_list)}')
             if len(downloaded) != len(download_chunkhash_str_list):

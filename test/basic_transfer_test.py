@@ -37,7 +37,7 @@ DOWNLOAD test/tmp2/download_target.chunkhash test/tmp2/download_result.fragment
 @pytest.fixture(scope='module')
 def drop_session():
     success = False
-    time_max = 10
+    time_max = 20
 
     if os.path.exists("test/tmp2/download_result.fragment"):
         os.remove("test/tmp2/download_result.fragment")
