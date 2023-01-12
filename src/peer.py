@@ -144,7 +144,8 @@ def cc_fsm(cc_inter):
             cc_start = [time(), time()]
         elif cwnd >= ssthresh:
             cc_state = CA
-        elif cc_inter_state == time_out or cc_inter_state == dup_ACK:
+        elif cc_inter_state == time_out:
+        # elif cc_inter_state == time_out or cc_inter_state == dup_ACK:
             ssthresh = max(math.floor(cwnd/2), 2)
             cwnd = 1.
         else:
@@ -374,8 +375,8 @@ def SR_send(Index, chunkhash_str, from_addr, sock):
             chunk_data = config.haschunks[chunkhash_str][send_seq*MAX_PAYLOAD:(send_seq+1)*MAX_PAYLOAD]
             data_pkt = udp_pkt.data(Index, send_seq+1, chunk_data)
             unack_pkt[(Index, send_seq + 1, from_addr)] = (time(), data_pkt, 0)
-            if send_seq in [150]:
-                continue
+            # if send_seq in [150]:
+            #     continue
             sock.sendto(data_pkt, from_addr)
         send_window_N[Index][1] = send_end_seq
 
