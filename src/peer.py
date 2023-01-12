@@ -10,7 +10,7 @@ import hashlib
 import argparse
 import pickle
 import json
-from time import time
+from time import time, sleep
 from packet import udp_pkt
 from config import *
 import matplotlib.pyplot as plt
@@ -142,27 +142,30 @@ def cc_fsm(cc_inter):
             cwnd += 1.
             ssthresh = 64
             cc_start = [time(), time()]
-        elif cc_inter_state == new_ACK:
-            cwnd += 1.
+        elif cwnd >= ssthresh:
+            cc_state = CA
         elif cc_inter_state == time_out or cc_inter_state == dup_ACK:
             ssthresh = max(math.floor(cwnd/2), 2)
             cwnd = 1.
-        elif cwnd >= ssthresh:
-            cc_state = CA
         else:
             print(f'in cc_fsm, unknown situation ss')
-    elif cc_state == CA:
         if cc_inter_state == new_ACK:
-            cwnd = cwnd + 1/cwnd
-        elif cc_inter_state == time_out:
+            cwnd += 1.
+    elif cc_state == CA:
+        if cc_inter_state == time_out:
             ssthresh = max(math.floor(cwnd/2), 2)
             cwnd = 1
+            cc_state = SS
+        elif cc_inter_state == new_ACK:
+            cwnd = cwnd + 1/cwnd
+
         else:
             print(f'in cc_fsm, unknown situation ca')
     else:
         print(f'in cc_fsm, unknown situation other')
 
 
+HAVE_DRAW = False
 def cwnd_observe():
     global cc_start
     if len(cc_start) != 2:
@@ -371,8 +374,8 @@ def SR_send(Index, chunkhash_str, from_addr, sock):
             chunk_data = config.haschunks[chunkhash_str][send_seq*MAX_PAYLOAD:(send_seq+1)*MAX_PAYLOAD]
             data_pkt = udp_pkt.data(Index, send_seq+1, chunk_data)
             unack_pkt[(Index, send_seq + 1, from_addr)] = (time(), data_pkt, 0)
-            # if send_seq in [150, 151]:
-            #     continue
+            if send_seq in [150]:
+                continue
             sock.sendto(data_pkt, from_addr)
         send_window_N[Index][1] = send_end_seq
 
@@ -395,6 +398,7 @@ def process_inbound_udp(sock):
     global config
     global ack_pkt
     global cc_state
+    global HAVE_DRAW
     global sample_RTT
     global output_file
     global SEND_WINDSIZE
@@ -513,11 +517,14 @@ def process_inbound_udp(sock):
         #     cc_dup_ack_counter[(from_addr, Seq)] += 1
         #     if cc_dup_ack_counter[(from_addr, Seq)] == 4:
         #         cc_state = CA
-        if (ack_num+10) * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
-            draw_cwnd()
+        # if (not HAVE_DRAW) and (ack_num+10) * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
+        #     draw_cwnd()
+        #     HAVE_DRAW = True
 
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # finished, 已被成功接收的文件大于chunk，相当于单个发送
+            draw_cwnd()
+            sleep(1)
             print(f"finished sending {sending_index_to_chunkhash[Index]}")
 
             key_list = list()
